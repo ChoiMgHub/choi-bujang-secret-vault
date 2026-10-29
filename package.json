@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test test/r5.test.mjs test/package-starter.test.mjs test/xdr-run.test.mjs test/step2.test.mjs",
+    "verify:step2": "node scripts/verify-step2.mjs",
     "build": "node scripts/build-public.mjs",
     "test:r5": "node --test test/r5.test.mjs",
     "test:package": "node --test test/package-starter.test.mjs",

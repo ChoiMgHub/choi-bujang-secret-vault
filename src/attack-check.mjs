@@ -1,6 +1,13 @@
 // The student changes this check as each stage adds an attack to the same app.
 // Never return tokens, private keys, real names, or note bodies.
+import { checkStep2 } from './step2-checks.mjs';
 export async function runAttackChecks(config) {
+  if (config.step === 2) {
+    const checks = await checkStep2(config);
+    const failed = checks.find(check => !check.passed);
+    if (failed) throw new Error(`2단계 점검 실패: ${failed.attackId} (${failed.observed})`);
+    return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
+  }
   if (config.step !== 1) throw new Error('이 단계의 공격 점검을 src/attack-check.mjs에 구현해 주세요.');
   let app;
   try {
