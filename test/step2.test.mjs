@@ -74,6 +74,10 @@ test('stage 2 build removes stale public data and keeps validated current-step d
   try {
     await cp(new URL('../scripts/', import.meta.url), join(root, 'scripts'), { recursive: true });
     await cp(new URL('../public/', import.meta.url), join(root, 'public'), { recursive: true });
+    await cp(new URL('../node_modules/@supabase/supabase-js/dist/umd/', import.meta.url),
+      join(root, 'node_modules/@supabase/supabase-js/dist/umd'), { recursive: true });
+    await cp(new URL('../node_modules/@supabase/supabase-js/LICENSE', import.meta.url),
+      join(root, 'node_modules/@supabase/supabase-js/LICENSE'));
     await writeFile(join(root, 'aleph.config.json'), JSON.stringify(config));
     await writeFile(join(root, 'public/data.json'), JSON.stringify({ notes: rows }));
     const buildEnv = { ...process.env, VERCEL_GIT_PROVIDER: 'github', VERCEL_GIT_REPO_OWNER: 'ChoiMgHub',

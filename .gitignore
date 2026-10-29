@@ -7,3 +7,4 @@ public/aleph.json
 public/data.json
 .private/
 step02_private_setup.sql
+public/vendor/

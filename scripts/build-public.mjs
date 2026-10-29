@@ -10,6 +10,12 @@ if (!Number.isInteger(config.step) || config.step < 1 || config.step > 12) {
   throw new Error('aleph.config.json의 단계는 1~12 정수여야 합니다.');
 }
 await mkdir(resolve(root, 'public'), { recursive: true });
+// Ship the pinned official browser SDK locally; no server environment values enter it.
+await mkdir(resolve(root, 'public', 'vendor'), { recursive: true });
+await copyFile(resolve(root, 'node_modules/@supabase/supabase-js/dist/umd/supabase.js'),
+  resolve(root, 'public/vendor/supabase.js'));
+await copyFile(resolve(root, 'node_modules/@supabase/supabase-js/LICENSE'),
+  resolve(root, 'public/vendor/SUPABASE-LICENSE.txt'));
 if (config.step === 1) {
   const data = JSON.parse(await readFile(source, 'utf8'));
   if (!Array.isArray(data.notes)) throw new Error('실습용 공개 자료 형식을 확인하세요.');
