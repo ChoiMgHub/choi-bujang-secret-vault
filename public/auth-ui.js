@@ -7,7 +7,48 @@
   const logoutButton = document.querySelector('#logout-button');
   const status = document.querySelector('#auth-status');
   const errorBox = document.querySelector('#auth-error');
+  const notes = document.querySelector('#notes');
   let busy = false;
+  let renderVersion = 0;
+  let noteRequest;
+
+  function noteMessage(text) {
+    const item = document.createElement('li');
+    item.textContent = text;
+    notes.replaceChildren(item);
+  }
+
+  async function loadNotes(session, version) {
+    const controller = new AbortController();
+    noteRequest = controller;
+    noteMessage('가상 메모를 불러오는 중입니다.');
+    try {
+      const response = await fetch('/api/notes', { cache: 'no-store',
+        headers: { Authorization: `Bearer ${session.access_token}` }, signal: controller.signal });
+      if (version !== renderVersion) return;
+      if (response.status === 401 || response.status === 403) {
+        noteMessage('로그인 정보를 확인하지 못했습니다. 로그아웃한 뒤 다시 로그인해 주세요.');
+        return;
+      }
+      if (!response.ok) throw new Error('notes_unavailable');
+      const data = await response.json();
+      if (version !== renderVersion) return;
+      if (!Array.isArray(data.notes)) throw new Error('invalid_notes');
+      notes.replaceChildren(...data.notes.map(note => {
+        const item = document.createElement('li');
+        const title = document.createElement('strong');
+        const content = document.createElement('span');
+        title.textContent = note.title;
+        content.textContent = note.content;
+        item.append(title, content);
+        return item;
+      }));
+    } catch (error) {
+      if (version === renderVersion && error?.name !== 'AbortError') {
+        noteMessage('서버 자료를 불러오지 못했습니다. 잠시 후 새로고침해 주세요.');
+      }
+    }
+  }
 
   function setBusy(value) {
     busy = value;
@@ -18,13 +59,19 @@
   }
 
   function renderSession(session) {
+    const version = ++renderVersion;
+    noteRequest?.abort();
+    notes.replaceChildren();
     const signedIn = Boolean(session?.user?.id);
+    notes.hidden = !signedIn;
     form.hidden = signedIn;
     logoutButton.hidden = !signedIn;
     status.textContent = signedIn
       ? `로그인 중: ${session.user.email || '인증된 사용자'}`
       : '로그인하지 않은 상태입니다.';
     password.value = '';
+    // No SDK calls inside the synchronous auth callback; this uses the supplied token.
+    if (signedIn && session.access_token) void loadNotes(session, version);
   }
 
   function loginError(error) {
@@ -83,6 +130,10 @@
       }
     });
   } catch {
+    ++renderVersion;
+    noteRequest?.abort();
+    notes.replaceChildren();
+    notes.hidden = true;
     form.hidden = true;
     logoutButton.hidden = true;
     status.textContent = '로그인 기능을 준비하지 못했습니다.';

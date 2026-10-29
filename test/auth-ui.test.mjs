@@ -5,16 +5,16 @@ import vm from 'node:vm';
 import { createClient } from '@supabase/supabase-js';
 
 const source = await readFile(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
-function ui(factory) {
+function ui(factory, fetchImpl = async () => Response.json({ notes: [{ id: '1', title: '<img src=x onerror=alert(1)>', content: '가상 메모' }] })) {
   const elements = new Map();
-  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error']) {
+  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes']) {
     elements.set(`#${id}`, { value: '', textContent: '', hidden: id === 'login-form' || id === 'logout-button', disabled: false,
-      events: {}, addEventListener(name, handler) { this.events[name] = handler; } });
+      children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; }, events: {}, addEventListener(name, handler) { this.events[name] = handler; } });
   }
   const storageData = new Map();
   const storage = { getItem: key => storageData.get(key) ?? null, setItem: (key, value) => storageData.set(key, value), removeItem: key => storageData.delete(key) };
   const window = { supabase: { createClient: (...args) => factory(...args) }, sessionStorage: storage };
-  vm.runInNewContext(source, { window, document: { querySelector: id => elements.get(id) } });
+  vm.runInNewContext(source, { window, document: { querySelector: id => elements.get(id), createElement: () => ({ textContent: '', children: [], append(...items) { this.children.push(...items); } }) }, fetch: fetchImpl, AbortController });
   return { get: id => elements.get(`#${id}`), storageData, storage,
     submit: () => elements.get('#login-form').events.submit({ preventDefault() {} }),
     logout: () => elements.get('#logout-button').events.click() };
@@ -35,7 +35,7 @@ function stub() {
         assert.equal(credentials.password, 'test-input');
         if (state.wait) await state.wait;
         if (state.loginError) return { error: state.loginError };
-        listener('SIGNED_IN', { user }); return { data: { session: { user } }, error: null };
+        listener('SIGNED_IN', { user, access_token: 'local-test-session' }); return { data: { session: { user, access_token: 'local-test-session' } }, error: null };
       },
       async signOut(options) {
         state.logoutCalls++;
@@ -57,9 +57,13 @@ test('login UI changes with SDK session events, clears password and logs out thr
   assert.equal(view.get('login-form').hidden, true); assert.equal(view.get('logout-button').hidden, false);
   assert.equal(view.get('auth-status').textContent, '로그인 중: learner-a@example.com');
   assert.equal(view.get('login-password').value, '');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(view.get('notes').hidden, false);
+  assert.equal(view.get('notes').children[0].children[0].textContent, '<img src=x onerror=alert(1)>');
   await view.logout(); assert.equal(state.logoutCalls, 1);
   assert.equal(view.get('login-form').hidden, false); assert.equal(view.get('logout-button').hidden, true);
   assert.equal(view.get('auth-status').textContent, '로그아웃했습니다.');
+  assert.equal(view.get('notes').hidden, true); assert.equal(view.get('notes').children.length, 0);
 });
 
 test('login failures show safe reasons, double submits call SDK once and failed logout is not reported as success', async () => {
@@ -123,4 +127,28 @@ test('public login code contains no secret key, token writer or custom password 
   assert.match(html, /src="\/auth-ui.js" defer/u);
   assert.doesNotMatch(source, /sb_secret_|SUPABASE_SECRET_KEY|localStorage|\.setItem\(|console\.|[\u3040-\u30ff]/u);
   assert.match(source, /signInWithPassword/u); assert.match(source, /signOut/u);
+});
+
+test('anonymous UI never requests notes; requests use SDK bearer and late responses cannot restore logged-out data', async () => {
+  const { factory } = stub();
+  const pending = []; let calls = 0;
+  const view = ui(factory, (url, init) => {
+    calls++;
+    assert.equal(url, '/api/notes'); assert.equal(init.headers.Authorization, 'Bearer local-test-session');
+    assert.equal(init.cache, 'no-store'); assert.ok(init.signal);
+    return new Promise(resolve => pending.push(resolve));
+  });
+  assert.equal(calls, 0); assert.equal(view.get('notes').hidden, true);
+  fill(view); await view.submit(); assert.ok(calls > 0);
+  await view.logout();
+  for (const resolve of pending) resolve(Response.json({ notes: [{ title: 'must stay hidden', content: 'late response' }] }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(view.get('notes').hidden, true); assert.equal(view.get('notes').children.length, 0);
+});
+
+test('unauthorized API response clears notes and displays a safe reauthentication reason', async () => {
+  const { factory } = stub();
+  const view = ui(factory, async () => Response.json({ error: 'AUTH_REQUIRED' }, { status: 401 }));
+  fill(view); await view.submit(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(view.get('notes').children[0].textContent, /로그인 정보를 확인하지 못/u);
 });

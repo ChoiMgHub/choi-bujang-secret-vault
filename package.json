@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/r5.test.mjs test/package-starter.test.mjs test/xdr-run.test.mjs test/step2.test.mjs test/auth-ui.test.mjs",
+    "test": "node --test test/r5.test.mjs test/package-starter.test.mjs test/xdr-run.test.mjs test/step2.test.mjs test/auth-ui.test.mjs test/auth-api.test.mjs",
     "verify:step2": "node scripts/verify-step2.mjs",
     "build": "node scripts/build-public.mjs",
     "test:r5": "node --test test/r5.test.mjs",

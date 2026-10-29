@@ -4,70 +4,13 @@ import { mkdtemp, cp, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createNotesHandler } from '../api/notes.js';
 import { deploymentIdentity } from '../scripts/deployment-identity.mjs';
 import { checkStep2 } from '../src/step2-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
-import vm from 'node:vm';
 
-const fakeKey = ['sb', 'secret', 'localtest'].join('_');
-const env = { SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SECRET_KEY: fakeKey };
-const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+// Historical stage-2 behavior stays tested independently of the current stage.
+const config = { ...JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8')), step: 2 };
 const rows = Array.from({ length: 4 }, (_, i) => ({ id: String(i), title: `가상 ${i}`, content: `연습 ${i}`, owner_id: 'hidden' }));
-function response() {
-  return { headers: {}, code: 200, body: null,
-    setHeader(key, value) { this.headers[key.toLowerCase()] = value; },
-    status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } };
-}
-
-test('stage 2 server queries the fixed table using only its server key and projects safe fields', async () => {
-  let called = 0;
-  const handler = createNotesHandler({ env, fetchImpl: async (url, init) => {
-    called++;
-    const target = new URL(url);
-    assert.equal(target.origin, env.SUPABASE_URL);
-    assert.equal(target.pathname, '/rest/v1/vault_notes');
-    assert.equal(target.searchParams.get('select'), 'id,title,content');
-    assert.equal(target.searchParams.get('order'), 'id.asc');
-    assert.equal(new Headers(init.headers).get('apikey'), fakeKey);
-    assert.ok(init.signal);
-    return new Response(JSON.stringify(rows), { headers: { 'content-type': 'application/json' } });
-  } });
-  const res = response();
-  await handler({ method: 'GET', query: { owner_id: 'spoof', table: 'users' }, headers: { apikey: 'browser-spoof' } }, res);
-  assert.equal(called, 1); assert.equal(res.code, 200);
-  assert.equal(res.headers['cache-control'], 'no-store');
-  assert.deepEqual(res.body.notes, rows.map(({ id, title, content }) => ({ id, title, content })));
-  assert.ok(!JSON.stringify(res.body).includes(fakeKey));
-});
-
-test('stage 2 missing/malformed config and writes never reach DB; upstream errors never echo secrets', async () => {
-  for (const invalid of [{}, { ...env, SUPABASE_SECRET_KEY: 'publishable' }, { ...env, SUPABASE_URL: 'https://example.supabase.co/evil' }]) {
-    const res = response();
-    await createNotesHandler({ env: invalid, fetchImpl: () => { throw new Error('must not call'); } })({ method: 'GET' }, res);
-    assert.equal(res.code, 503); assert.equal(res.body.error, 'SERVER_NOT_CONFIGURED');
-    assert.ok(res.body.issues.length > 0);
-    assert.ok(res.body.issues.every(issue => Object.keys(issue).sort().join(',') === 'name,reason'));
-  }
-  for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) {
-    const res = response();
-    await createNotesHandler({ env, fetchImpl: () => { throw new Error('must not call'); } })({ method }, res);
-    assert.equal(res.code, 405); assert.equal(res.headers.allow, 'GET');
-  }
-  for (const fetchImpl of [async () => { throw new Error(fakeKey); }, async () => new Response(JSON.stringify({ message: fakeKey }), { status: 403 }), async () => new Response(JSON.stringify([{ title: 'bad' }]))]) {
-    const res = response();
-    await createNotesHandler({ env, fetchImpl })({ method: 'GET' }, res);
-    assert.equal(res.code, 502); assert.deepEqual(res.body, { error: 'NOTES_UNAVAILABLE' });
-    assert.ok(!JSON.stringify(res).includes(fakeKey));
-  }
-});
-
-test('server configuration trims clipboard whitespace without exposing values', async () => {
-  const res = response();
-  await createNotesHandler({ env: { SUPABASE_URL: ` ${env.SUPABASE_URL}\n`, SUPABASE_SECRET_KEY: `${fakeKey}\r\n` },
-    fetchImpl: async () => Response.json(rows) })({ method: 'GET' }, res);
-  assert.equal(res.code, 200);
-});
 
 test('stage 2 build removes stale public data and keeps validated current-step deployment identity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'vault-build-'));
@@ -118,20 +61,4 @@ test('stage 2 HTTP checks observe real responses, reject stale files/commit and 
     globalThis.fetch = fakeRemote('static');
     await assert.rejects(runAttackChecks(config), /static_note_seed/u);
   } finally { globalThis.fetch = original; }
-});
-
-test('stage 2 browser loads server data, renders text only and shows a safe error on API failure', async () => {
-  const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  const source = html.match(/<script type="module">([\s\S]*?)<\/script>/u)[1];
-  function element() { return { textContent: '', children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; } }; }
-  for (const ok of [true, false]) {
-    const list = element();
-    const context = vm.createContext({ document: { querySelector: () => list, createElement: element }, fetch: async (url) => {
-      assert.equal(url, '/api/notes');
-      return ok ? Response.json({ notes: [{ title: '<img src=x onerror=alert(1)>', content: '<script>bad</script>' }] }) : new Response(null, { status: 503 });
-    } });
-    await vm.runInContext(`(async()=>{${source}})()`, context);
-    if (ok) { assert.equal(list.children[0].children[0].textContent, '<img src=x onerror=alert(1)>'); }
-    else assert.match(list.children[0].textContent, /새로고침/u);
-  }
 });
