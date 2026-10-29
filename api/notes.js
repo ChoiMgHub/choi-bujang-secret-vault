@@ -10,11 +10,18 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
       response.setHeader('Allow', 'GET');
       return response.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
     }
-    const url = env.SUPABASE_URL;
-    const key = env.SUPABASE_SECRET_KEY;
-    if (typeof url !== 'string' || !/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/u.test(url)
-        || typeof key !== 'string' || !/^sb_secret_[A-Za-z0-9_-]+$/u.test(key)) {
-      return response.status(503).json({ error: 'SERVER_NOT_CONFIGURED' });
+    const url = typeof env.SUPABASE_URL === 'string' ? env.SUPABASE_URL.trim() : '';
+    const key = typeof env.SUPABASE_SECRET_KEY === 'string' ? env.SUPABASE_SECRET_KEY.trim() : '';
+    const issues = [];
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/u.test(url)) {
+      issues.push({ name: 'SUPABASE_URL', reason: url ? 'INVALID_FORMAT' : 'MISSING' });
+    }
+    if (!/^sb_secret_[A-Za-z0-9_-]+$/u.test(key)) {
+      issues.push({ name: 'SUPABASE_SECRET_KEY', reason: key ? 'INVALID_FORMAT' : 'MISSING' });
+    }
+    if (issues.length) {
+      // Only configuration names/reasons are public. Never include their values.
+      return response.status(503).json({ error: 'SERVER_NOT_CONFIGURED', issues });
     }
     try {
       const db = createClient(url, key, {

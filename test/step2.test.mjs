@@ -45,7 +45,9 @@ test('stage 2 missing/malformed config and writes never reach DB; upstream error
   for (const invalid of [{}, { ...env, SUPABASE_SECRET_KEY: 'publishable' }, { ...env, SUPABASE_URL: 'https://example.supabase.co/evil' }]) {
     const res = response();
     await createNotesHandler({ env: invalid, fetchImpl: () => { throw new Error('must not call'); } })({ method: 'GET' }, res);
-    assert.equal(res.code, 503); assert.deepEqual(res.body, { error: 'SERVER_NOT_CONFIGURED' });
+    assert.equal(res.code, 503); assert.equal(res.body.error, 'SERVER_NOT_CONFIGURED');
+    assert.ok(res.body.issues.length > 0);
+    assert.ok(res.body.issues.every(issue => Object.keys(issue).sort().join(',') === 'name,reason'));
   }
   for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) {
     const res = response();
@@ -58,6 +60,13 @@ test('stage 2 missing/malformed config and writes never reach DB; upstream error
     assert.equal(res.code, 502); assert.deepEqual(res.body, { error: 'NOTES_UNAVAILABLE' });
     assert.ok(!JSON.stringify(res).includes(fakeKey));
   }
+});
+
+test('server configuration trims clipboard whitespace without exposing values', async () => {
+  const res = response();
+  await createNotesHandler({ env: { SUPABASE_URL: ` ${env.SUPABASE_URL}\n`, SUPABASE_SECRET_KEY: `${fakeKey}\r\n` },
+    fetchImpl: async () => Response.json(rows) })({ method: 'GET' }, res);
+  assert.equal(res.code, 200);
 });
 
 test('stage 2 build removes stale public data and keeps validated current-step deployment identity', async () => {
