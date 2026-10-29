@@ -15,7 +15,11 @@ const judgeKeySet = createLocalJWKSet({ keys: [judgeJwk] });
 const fakeKey = ['sb', 'secret', 'localtest'].join('_');
 const env = { SUPABASE_URL: config.identityProvider.issuer.replace('/auth/v1', ''), SUPABASE_SECRET_KEY: fakeKey };
 const userId = '10000000-0000-4000-8000-000000000001';
-const rows = Array.from({ length: 4 }, (_, i) => ({ id: String(i), title: `가상 ${i}`, content: `연습 ${i}`, owner_id: 'not-returned' }));
+const otherId = '10000000-0000-4000-8000-000000000002';
+const rows = Array.from({ length: 4 }, (_, i) => ({ id: `20000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`,
+  title: `가상 ${i}`, content: `연습 ${i}`, owner_id: i < 2 ? userId : i === 2 ? otherId : null,
+  created_at: '2026-10-29T00:00:00Z' }));
+const safe = ({ id, title, content }) => ({ id, title, body: content });
 const token = async (changes = {}, key = pair.privateKey) => new SignJWT({ role: 'authenticated', ...changes })
   .setProtectedHeader({ alg: 'ES256', kid: jwk.kid }).setIssuer(changes.iss ?? config.identityProvider.issuer)
   .setSubject(changes.sub ?? userId).setAudience(changes.aud ?? 'authenticated')
@@ -23,79 +27,137 @@ const token = async (changes = {}, key = pair.privateKey) => new SignJWT({ role:
 function response() { return { code: 0, headers: {}, body: null,
   setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
   status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } }; }
-function fixture({ envOverride = env, records = rows, upstreamStatus = 200 } = {}) {
-  let recordCalls = 0; const targets = [];
+function fixture({ envOverride = env, upstreamError = false, malformed = false } = {}) {
+  let recordCalls = 0; const targets = []; const records = new Map(rows.map(row => [row.id, { ...row }]));
   const handler = createNotesHandler({ env: envOverride, judgeKeySet, fetchImpl: async (url, init) => {
     const target = new URL(url); targets.push(target.pathname);
     if (target.pathname.endsWith('/.well-known/jwks.json')) return Response.json({ keys: [jwk] });
     recordCalls++;
     assert.equal(target.origin, env.SUPABASE_URL);
     assert.equal(target.pathname, '/rest/v1/vault_notes');
-    assert.equal(target.searchParams.get('select'), 'id,title,content');
-    assert.equal(target.searchParams.get('order'), 'id.asc');
     assert.equal(new Headers(init.headers).get('apikey'), fakeKey);
-    return Response.json(records, { status: upstreamStatus });
+    if (upstreamError) return Response.json({ message: fakeKey, code: '42501' }, { status: 403 });
+    if (malformed) return Response.json([{ title: 'bad' }]);
+    const matches = row => ['id', 'owner_id'].every(field => {
+      const filter = target.searchParams.get(field); return !filter || `eq.${row[field]}` === filter;
+    });
+    let result = [...records.values()].filter(matches);
+    const method = init.method || 'GET';
+    if (method === 'POST') {
+      const value = JSON.parse(init.body);
+      if (records.has(value.id)) return Response.json({ code: '23505', message: fakeKey }, { status: 409 });
+      const row = { ...value, created_at: '2026-10-29T01:00:00Z' }; records.set(row.id, row); result = [row];
+    } else if (method === 'PATCH') {
+      const value = JSON.parse(init.body); result = result.map(row => ({ ...row, ...value }));
+      for (const row of result) records.set(row.id, row);
+    } else if (method === 'DELETE') {
+      for (const row of result) records.delete(row.id);
+    }
+    if (target.searchParams.get('limit')) result = result.slice(0, Number(target.searchParams.get('limit')));
+    const columns = target.searchParams.get('select')?.split(',');
+    if (columns) result = result.map(row => Object.fromEntries(columns.map(column => [column, row[column]])));
+    return Response.json(result, { status: method === 'POST' ? 201 : 200 });
   } });
-  return { handler, get recordCalls() { return recordCalls; }, targets };
+  return { handler, records, get recordCalls() { return recordCalls; }, targets };
+}
+async function call(f, authorization, method = 'GET', url = '/api/notes', body, extras = {}) {
+  const res = response();
+  await f.handler({ method, url, body, headers: authorization ? { authorization, ...extras } : extras }, res);
+  return res;
 }
 
-test('missing token and browser identity spoofing get 401 JSON without any DB query', async () => {
+test('all list and single-note methods require login; browser identity spoofing cannot bypass 401', async () => {
   const f = fixture();
-  for (const request of [{ method: 'GET' }, { method: 'GET', headers: { 'x-user-id': userId, role: 'authenticated' }, query: { userId }, body: { userId, role: 'admin' } }]) {
-    const res = response(); await f.handler(request, res);
+  for (const [method, path] of [['GET', '/api/notes'], ['POST', '/api/notes'], ['GET', `/api/notes/${rows[0].id}`], ['PUT', `/api/notes/${rows[0].id}`], ['DELETE', `/api/notes/${rows[0].id}`]]) {
+    const res = await call(f, null, method, path, { userId, role: 'admin' }, { 'x-user-id': userId, role: 'authenticated' });
     assert.equal(res.code, 401); assert.deepEqual(res.body, { error: 'AUTH_REQUIRED' });
     assert.equal(res.headers['cache-control'], 'no-store');
   }
   assert.equal(f.recordCalls, 0); assert.equal(f.targets.length, 0);
 });
 
-test('unchanged starter verifier and real SDK verify student ES256 signature before DB read', async () => {
-  const f = fixture(); const res = response();
-  await f.handler({ method: 'GET', headers: { authorization: `Bearer ${await token()}`, 'x-user-id': 'spoofed' }, query: { owner_id: 'spoofed', table: 'users' } }, res);
+test('unchanged verifier and SDK verify the signature; list returns only verified user records as id/title/body', async () => {
+  const f = fixture();
+  const res = await call(f, `Bearer ${await token()}`, 'GET', `/api/notes?owner_id=${otherId}&userId=${otherId}`, undefined, { 'x-user-id': otherId });
   assert.equal(res.code, 200); assert.equal(f.recordCalls, 1);
-  assert.deepEqual(res.body.notes, rows.map(({ id, title, content }) => ({ id, title, content })));
+  assert.deepEqual(res.body, rows.filter(row => row.owner_id === userId).map(safe));
   assert.ok(!JSON.stringify(res.body).includes(fakeKey));
 });
 
-test('malformed, forged, expired, wrong-issuer/audience/role and invalid-user tokens deny without reading notes', async () => {
+test('malformed, forged, expired, wrong-issuer/audience/role and invalid-user tokens cannot read notes', async () => {
   const f = fixture();
   const bad = ['not-a-token', await token({}, attacker.privateKey), await token({ exp: Math.floor(Date.now() / 1000) - 10 }),
     await token({ iss: 'https://other-project.supabase.co/auth/v1' }), await token({ aud: 'other-app' }),
     await token({ role: 'service_role' }), await token({ sub: 'not-a-user' })];
   for (const value of bad) {
-    const res = response(); await f.handler({ method: 'GET', headers: { authorization: `Bearer ${value}` } }, res);
+    const res = await call(f, `Bearer ${value}`);
     assert.equal(res.code, 401); assert.deepEqual(res.body, { error: 'AUTH_REQUIRED' });
   }
   assert.equal(f.recordCalls, 0);
 });
 
-test('starter judge token path verifies trusted signature and claims without changing the helper', async () => {
+test('starter judge path keeps signature/claim verification and the helper remains byte-identical', async () => {
   const judge = await new SignJWT({ aleph_run: '20000000-0000-4000-8000-000000000002', aleph_role: 'judge', aleph_identity: 'a' })
     .setProtectedHeader({ alg: 'ES256', kid: judgeJwk.kid }).setIssuer(config.judgeIssuer)
     .setAudience(new URL(config.publicAppUrl).hostname).setSubject(userId)
     .setIssuedAt().setExpirationTime('10m').sign(judgePair.privateKey);
-  const f = fixture(); const res = response();
-  await f.handler({ method: 'GET', headers: { authorization: `Bearer ${judge}` } }, res);
-  assert.equal(res.code, 200); assert.equal(f.recordCalls, 1);
-  const hash = createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${(await readFile(new URL('../src/verify-login.mjs', import.meta.url))).length}\0`), await readFile(new URL('../src/verify-login.mjs', import.meta.url))])).digest('hex');
+  const f = fixture(); assert.equal((await call(f, `Bearer ${judge}`)).code, 200);
+  const helper = await readFile(new URL('../src/verify-login.mjs', import.meta.url));
+  const hash = createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${helper.length}\0`), helper])).digest('hex');
   assert.equal(hash, '784ec5af7067e01c6b7f83cf423db0b8c63d9e09');
 });
 
-test('missing server config and upstream errors return no secret; unimplemented write methods remain 405', async () => {
+test('CRUD supports generated/supplied UUIDs, server-owned creation, safe update, deletion and subsequent 404', async () => {
+  const f = fixture(); const auth = `Bearer ${await token()}`;
+  const created = await call(f, auth, 'POST', '/api/notes', { title: '새 연습', body: '가상 내용', owner_id: otherId, userId: otherId, role: 'admin' });
+  assert.equal(created.code, 201); assert.deepEqual(Object.keys(created.body), ['id']);
+  const id = created.body.id; assert.match(id, /^[a-f0-9-]{36}$/u);
+  assert.equal(f.records.get(id).owner_id, userId);
+  assert.deepEqual((await call(f, auth, 'GET', `/api/notes/${id}`)).body, { id, title: '새 연습', body: '가상 내용' });
+  const updated = await call(f, auth, 'PUT', `/api/notes/${id}`, { id, title: '수정 연습', body: '<script>text only</script>', owner_id: otherId });
+  assert.equal(updated.code, 200); assert.equal(updated.body.body, '<script>text only</script>');
+  assert.equal(f.records.get(id).owner_id, userId);
+  assert.equal((await call(f, auth, 'DELETE', `/api/notes/${id}`)).code, 200);
+  assert.equal((await call(f, auth, 'GET', `/api/notes/${id}`)).code, 404);
+  assert.equal((await call(f, auth, 'DELETE', `/api/notes/${id}`)).code, 404);
+  const supplied = '30000000-0000-4000-8000-000000000003';
+  assert.equal((await call(f, auth, 'POST', '/api/notes', { id: supplied, title: '지정 번호', body: '' })).body.id, supplied);
+  const duplicate = await call(f, auth, 'POST', '/api/notes', { id: supplied, title: '덮어쓰기 금지', body: '' });
+  assert.equal(duplicate.code, 409); assert.equal(f.records.get(supplied).title, '지정 번호');
+  assert.equal(f.records.get(rows[3].id).owner_id, null);
+});
+
+test('invalid JSON/fields, oversized bodies, invalid UUIDs and mismatched update IDs do not write', async () => {
+  const f = fixture(); const auth = `Bearer ${await token()}`;
+  for (const input of ['{bad', [], { title: ' ', body: '' }, { title: 'a', body: 3 }, { title: 'a', body: '', id: 'bad' }]) {
+    assert.equal((await call(f, auth, 'POST', '/api/notes', input)).code, 400);
+  }
+  assert.equal((await call(f, auth, 'POST', '/api/notes', 'x'.repeat(70000))).code, 413);
+  assert.equal((await call(f, auth, 'GET', '/api/notes/not-a-uuid')).code, 400);
+  assert.equal((await call(f, auth, 'PUT', `/api/notes/${rows[0].id}`, { id: rows[1].id, title: 'a', body: '' })).code, 400);
+  assert.equal(f.recordCalls, 0);
+  assert.equal((await call(f, auth, 'DELETE', '/api/notes')).code, 405);
+  assert.equal((await call(f, auth, 'POST', `/api/notes/${rows[0].id}`, { title: 'a', body: '' })).code, 405);
+});
+
+test('stage 3 documented gap: authenticated B can access A by ID; own list and stored owner still stay account-scoped', async () => {
+  const f = fixture(); const b = `Bearer ${await token({ sub: otherId })}`;
+  assert.deepEqual((await call(f, b)).body, rows.filter(row => row.owner_id === otherId).map(safe));
+  assert.equal((await call(f, b, 'GET', `/api/notes/${rows[0].id}`)).code, 200);
+  assert.equal((await call(f, b, 'PUT', `/api/notes/${rows[0].id}`, { title: '가상 교차 수정', body: '4단계에서 차단할 허점' })).code, 200);
+  assert.equal(f.records.get(rows[0].id).owner_id, userId);
+  assert.equal((await call(f, b, 'DELETE', `/api/notes/${rows[0].id}`)).code, 200);
+});
+
+test('configuration and DB failures never echo server keys or upstream diagnostics', async () => {
   const auth = `Bearer ${await token()}`;
   for (const invalid of [{}, { ...env, SUPABASE_SECRET_KEY: 'publishable' }, { ...env, SUPABASE_URL: 'https://other.supabase.co' }]) {
-    const f = fixture({ envOverride: invalid }); const res = response();
-    await f.handler({ method: 'GET', headers: { authorization: auth } }, res);
+    const f = fixture({ envOverride: invalid }); const res = await call(f, auth);
     assert.equal(res.code, 503); assert.equal(f.recordCalls, 0);
     assert.ok(!JSON.stringify(res.body).includes(fakeKey));
   }
-  for (const options of [{ records: { message: fakeKey }, upstreamStatus: 403 }, { records: [{ title: 'bad' }] }]) {
-    const f = fixture(options); const res = response();
-    await f.handler({ method: 'GET', headers: { authorization: auth } }, res);
+  for (const options of [{ upstreamError: true }, { malformed: true }]) {
+    const f = fixture(options); const res = await call(f, auth);
     assert.equal(res.code, 502); assert.deepEqual(res.body, { error: 'NOTES_UNAVAILABLE' });
-  }
-  for (const method of ['POST', 'PUT', 'DELETE']) {
-    const f = fixture(); const res = response(); await f.handler({ method, headers: { authorization: auth } }, res);
-    assert.equal(res.code, 405); assert.equal(f.recordCalls, 0);
   }
 });

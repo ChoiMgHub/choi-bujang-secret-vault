@@ -15,13 +15,14 @@
     ul { list-style: none; display: grid; gap: 12px; padding: 0; }
     li { border: 1px solid #51667c; border-radius: 14px; padding: 17px 19px; background: #1a2a3d; }
     strong { display: block; font-size: 18px; margin-bottom: 5px; }
-    li span { color: #bfd0e5; }
+    li span { color: #bfd0e5; white-space: pre-wrap; }
+    .memo-actions { display: flex; gap: 10px; }
     [hidden] { display: none !important; }
     .auth-panel { margin: 24px 0; padding: 20px; border: 1px solid #51667c; border-radius: 14px; background: #1a2a3d; }
     .auth-panel h2 { margin-top: 0; }
     label { display: block; margin: 12px 0 6px; }
-    input, button { font: inherit; box-sizing: border-box; border-radius: 8px; padding: 11px 12px; }
-    input { width: 100%; border: 1px solid #8da1b8; background: #101a28; color: #ecf4ff; }
+    input, textarea, button { font: inherit; box-sizing: border-box; border-radius: 8px; padding: 11px 12px; }
+    input, textarea { width: 100%; border: 1px solid #8da1b8; background: #101a28; color: #ecf4ff; }
     button { margin-top: 16px; border: 0; background: #8ad8df; color: #101a28; font-weight: 700; cursor: pointer; }
     button:disabled { opacity: .6; cursor: wait; }
     .error { color: #ffd4dc; min-height: 1.5em; }
@@ -45,9 +46,22 @@
       </form>
       <button id="logout-button" type="button" hidden disabled>로그아웃</button>
       <p id="auth-error" class="error" role="alert"></p>
-      <p>로그인 후 메모를 볼 수 있습니다. 메모 추가·수정·삭제는 다음 제작에서 연결합니다.</p>
+      <p>로그인한 계정으로 가상 메모를 작성하고 관리합니다.</p>
     </section>
-    <ul id="notes" aria-live="polite" hidden></ul>
+    <section id="memo-panel" class="auth-panel" aria-labelledby="memo-heading" hidden>
+      <h2 id="memo-heading">내 가상 메모</h2>
+      <p>이 계정으로 작성한 메모가 표시됩니다. 처음 목록이 비어 있으면 새 연습 메모를 추가하세요.</p>
+      <form id="memo-form">
+        <label for="memo-title">제목</label>
+        <input id="memo-title" type="text" maxlength="200" required placeholder="예: 로그인 연습 메모">
+        <label for="memo-body">내용</label>
+        <textarea id="memo-body" rows="4" maxlength="10000" placeholder="실제 개인정보 대신 가상 연습 내용을 적으세요."></textarea>
+        <button id="memo-save" type="submit">메모 추가</button>
+        <button id="memo-cancel" type="button" hidden>수정 취소</button>
+      </form>
+      <p id="memo-message" role="status"></p>
+      <ul id="notes" aria-live="polite" hidden></ul>
+    </section>
   </main>
   <script src="/vendor/supabase.js" defer></script>
   <script src="/auth-ui.js" defer></script>

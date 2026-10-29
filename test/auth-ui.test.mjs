@@ -5,16 +5,16 @@ import vm from 'node:vm';
 import { createClient } from '@supabase/supabase-js';
 
 const source = await readFile(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
-function ui(factory, fetchImpl = async () => Response.json({ notes: [{ id: '1', title: '<img src=x onerror=alert(1)>', content: '가상 메모' }] })) {
+function ui(factory, fetchImpl = async () => Response.json([{ id: '10000000-0000-4000-8000-000000000001', title: '<img src=x onerror=alert(1)>', body: '가상 메모' }])) {
   const elements = new Map();
-  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes']) {
+  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes', 'memo-panel', 'memo-form', 'memo-title', 'memo-body', 'memo-save', 'memo-cancel', 'memo-message']) {
     elements.set(`#${id}`, { value: '', textContent: '', hidden: id === 'login-form' || id === 'logout-button', disabled: false,
       children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; }, events: {}, addEventListener(name, handler) { this.events[name] = handler; } });
   }
   const storageData = new Map();
   const storage = { getItem: key => storageData.get(key) ?? null, setItem: (key, value) => storageData.set(key, value), removeItem: key => storageData.delete(key) };
-  const window = { supabase: { createClient: (...args) => factory(...args) }, sessionStorage: storage };
-  vm.runInNewContext(source, { window, document: { querySelector: id => elements.get(id), createElement: () => ({ textContent: '', children: [], append(...items) { this.children.push(...items); } }) }, fetch: fetchImpl, AbortController });
+  const window = { supabase: { createClient: (...args) => factory(...args) }, sessionStorage: storage, confirm: () => true };
+  vm.runInNewContext(source, { window, document: { querySelector: id => elements.get(id), createElement: () => ({ textContent: '', children: [], events: {}, addEventListener(name, handler) { this.events[name] = handler; }, append(...items) { this.children.push(...items); } }) }, fetch: fetchImpl, AbortController });
   return { get: id => elements.get(`#${id}`), storageData, storage,
     submit: () => elements.get('#login-form').events.submit({ preventDefault() {} }),
     logout: () => elements.get('#logout-button').events.click() };
@@ -141,7 +141,7 @@ test('anonymous UI never requests notes; requests use SDK bearer and late respon
   assert.equal(calls, 0); assert.equal(view.get('notes').hidden, true);
   fill(view); await view.submit(); assert.ok(calls > 0);
   await view.logout();
-  for (const resolve of pending) resolve(Response.json({ notes: [{ title: 'must stay hidden', content: 'late response' }] }));
+  for (const resolve of pending) resolve(Response.json([{ id: '1', title: 'must stay hidden', body: 'late response' }]));
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(view.get('notes').hidden, true); assert.equal(view.get('notes').children.length, 0);
 });
@@ -151,4 +151,52 @@ test('unauthorized API response clears notes and displays a safe reauthenticatio
   const view = ui(factory, async () => Response.json({ error: 'AUTH_REQUIRED' }, { status: 401 }));
   fill(view); await view.submit(); await new Promise(resolve => setImmediate(resolve));
   assert.match(view.get('notes').children[0].textContent, /로그인 정보를 확인하지 못/u);
+});
+
+test('memo UI creates, loads for editing, updates and deletes via the documented HTTP routes', async () => {
+  const { factory } = stub();
+  const records = new Map(); const calls = [];
+  const id = '40000000-0000-4000-8000-000000000004';
+  const view = ui(factory, async (path, init) => {
+    const method = init.method || 'GET'; calls.push(`${method} ${path}`);
+    assert.equal(init.headers.Authorization, 'Bearer local-test-session');
+    if (method === 'GET' && path === '/api/notes') return Response.json([...records.values()]);
+    if (method === 'POST') {
+      assert.equal(path, '/api/notes');
+      const data = JSON.parse(init.body); assert.deepEqual(Object.keys(data).sort(), ['body', 'title']);
+      records.set(id, { id, ...data }); return Response.json({ id }, { status: 201 });
+    }
+    assert.equal(path, `/api/notes/${id}`);
+    if (method === 'GET') return Response.json(records.get(id));
+    if (method === 'PUT') { records.set(id, { id, ...JSON.parse(init.body) }); return Response.json(records.get(id)); }
+    assert.equal(method, 'DELETE'); records.delete(id); return Response.json({ id });
+  });
+  assert.equal(view.get('memo-panel').hidden, true);
+  fill(view); await view.submit(); await new Promise(resolve => setImmediate(resolve));
+  assert.match(view.get('notes').children[0].textContent, /아직 내가 작성한 메모/u);
+  view.get('memo-title').value = '연습 제목'; view.get('memo-body').value = '<script>입력은 글자</script>';
+  await view.get('memo-form').events.submit({ preventDefault() {} });
+  assert.equal(records.size, 1); assert.equal(view.get('notes').children[0].children[1].textContent, '<script>입력은 글자</script>');
+  await view.get('notes').children[0].children[2].children[0].events.click();
+  assert.equal(view.get('memo-title').value, '연습 제목'); assert.equal(view.get('memo-save').textContent, '수정 저장');
+  view.get('memo-title').value = '수정 제목'; view.get('memo-body').value = '수정 내용';
+  await view.get('memo-form').events.submit({ preventDefault() {} });
+  assert.equal(records.get(id).title, '수정 제목'); assert.equal(view.get('memo-title').value, '');
+  await view.get('notes').children[0].children[2].children[1].events.click();
+  assert.equal(records.size, 0); assert.match(view.get('notes').children[0].textContent, /아직 내가 작성한 메모/u);
+  assert.ok(calls.includes('POST /api/notes')); assert.ok(calls.includes(`GET /api/notes/${id}`));
+  assert.ok(calls.includes(`PUT /api/notes/${id}`)); assert.ok(calls.includes(`DELETE /api/notes/${id}`));
+  view.get('memo-title').value = '지워야 할 초안'; await view.logout();
+  assert.equal(view.get('memo-panel').hidden, true); assert.equal(view.get('memo-title').value, '');
+});
+
+test('failed memo write preserves the draft and shows a safe input error', async () => {
+  const { factory } = stub();
+  const view = ui(factory, async (_path, init) => (init.method || 'GET') === 'GET' ? Response.json([])
+    : Response.json({ error: 'INVALID_NOTE' }, { status: 400 }));
+  fill(view); await view.submit(); await new Promise(resolve => setImmediate(resolve));
+  view.get('memo-title').value = '초안 유지'; view.get('memo-body').value = '연습';
+  await view.get('memo-form').events.submit({ preventDefault() {} });
+  assert.equal(view.get('memo-title').value, '초안 유지');
+  assert.match(view.get('memo-message').textContent, /200자/u);
 });

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/r5.test.mjs test/package-starter.test.mjs test/xdr-run.test.mjs test/step2.test.mjs test/auth-ui.test.mjs test/auth-api.test.mjs",
+    "test": "node --test test/r5.test.mjs test/package-starter.test.mjs test/xdr-run.test.mjs test/step2.test.mjs test/auth-ui.test.mjs test/auth-api.test.mjs test/step3-checks.test.mjs",
     "verify:step2": "node scripts/verify-step2.mjs",
     "build": "node scripts/build-public.mjs",
     "test:r5": "node --test test/r5.test.mjs",
@@ -12,7 +12,8 @@
     "decider:test": "node scripts/decider-test.mjs",
     "detect:test": "node scripts/detect-test.mjs",
     "fixture:7": "node scripts/fixture-7.mjs",
-    "xdr:run": "node scripts/xdr-run.mjs"
+    "xdr:run": "node scripts/xdr-run.mjs",
+    "verify:step3": "node scripts/verify-step3.mjs"
   },
   "engines": {
     "node": ">=22"
