@@ -4,7 +4,8 @@ import deploymentConfig from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const COLUMNS = 'id,title,content';
+// owner_id is checked internally and never included in the public note response.
+const COLUMNS = 'id,title,content,owner_id';
 const MAX_BYTES = 65536;
 const safeNote = row => ({ id: row.id, title: row.title, body: row.content });
 const validNote = row => row && typeof row.id === 'string'
@@ -19,13 +20,15 @@ function inputBody(request) {
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_body');
   if (Buffer.byteLength(JSON.stringify(value)) > MAX_BYTES) throw new RangeError('body_too_large');
+  // PUT accepts note text, not a request to transfer ownership.
+  if (request.method === 'PUT' && Object.hasOwn(value, 'owner_id')) throw new TypeError('invalid_owner_update');
   if (typeof value.title !== 'string' || !value.title.trim() || value.title.length > 200
       || typeof value.body !== 'string' || value.body.length > 10000) throw new TypeError('invalid_note');
   if (value.id !== undefined && (typeof value.id !== 'string' || !UUID.test(value.id))) throw new TypeError('invalid_id');
   return { id: value.id?.toLowerCase(), title: value.title.trim(), content: value.body };
 }
 
-// Stage 3: authentication is required. Per-ID owner authorization intentionally follows in stage 4.
+// Stage 4: every read/write is scoped to the verified identity in the DB query.
 // The browser cannot set owner_id on creation or change it on update.
 export function createNotesHandler({ env = process.env, fetchImpl = globalThis.fetch,
   config = deploymentConfig, judgeKeySet } = {}) {
@@ -75,13 +78,14 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
       }
       const table = () => db.from('vault_notes');
       const timed = query => query.abortSignal(AbortSignal.timeout(10000));
+      const validOwnedNote = row => validNote(row) && row.owner_id === identity.userId;
       if (request.method === 'GET') {
-        // List reads are account-scoped. Single-ID reads intentionally lack owner checks in stage 3.
-        let query = table().select(COLUMNS);
+        // An unknown ID and another account's ID both return 404 without note data.
+        let query = table().select(COLUMNS).eq('owner_id', identity.userId);
         query = id ? query.eq('id', id).limit(1)
-          : query.eq('owner_id', identity.userId).order('created_at', { ascending: true }).order('id', { ascending: true });
+          : query.order('created_at', { ascending: true }).order('id', { ascending: true });
         const { data, error } = await timed(query);
-        if (error || !Array.isArray(data) || data.some(row => !validNote(row))) {
+        if (error || !Array.isArray(data) || data.some(row => !validOwnedNote(row))) {
           return response.status(502).json({ error: 'NOTES_UNAVAILABLE' });
         }
         if (id) return data.length ? response.status(200).json(safeNote(data[0]))
@@ -89,8 +93,12 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
         return response.status(200).json(data.map(safeNote));
       }
       if (request.method === 'DELETE') {
-        const { data, error } = await timed(table().delete().eq('id', id).select('id'));
-        if (error || !Array.isArray(data)) return response.status(502).json({ error: 'NOTES_UNAVAILABLE' });
+        const { data, error } = await timed(table().delete().eq('id', id)
+          .eq('owner_id', identity.userId).select('id,owner_id'));
+        if (error || !Array.isArray(data)
+            || data.some(row => row.id !== id || row.owner_id !== identity.userId)) {
+          return response.status(502).json({ error: 'NOTES_UNAVAILABLE' });
+        }
         return data.length ? response.status(200).json({ id: data[0].id })
           : response.status(404).json({ error: 'NOT_FOUND' });
       }
@@ -111,9 +119,12 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
         return response.status(201).json({ id: noteId });
       }
       if (input.id && input.id !== id) return response.status(400).json({ error: 'INVALID_NOTE' });
-      const { data, error } = await timed(table().update({ title: input.title, content: input.content })
-        .eq('id', id).select(COLUMNS));
-      if (error || !Array.isArray(data) || data.some(row => !validNote(row))) {
+      // Match the existing owner in the same write, and keep the resulting owner
+      // equal to the verified identity. Client owner values never enter the write.
+      const { data, error } = await timed(table().update({ title: input.title,
+        content: input.content, owner_id: identity.userId })
+        .eq('id', id).eq('owner_id', identity.userId).select(COLUMNS));
+      if (error || !Array.isArray(data) || data.some(row => !validOwnedNote(row))) {
         return response.status(502).json({ error: 'NOTES_UNAVAILABLE' });
       }
       return data.length ? response.status(200).json(safeNote(data[0]))

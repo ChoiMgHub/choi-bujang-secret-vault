@@ -27,7 +27,8 @@ const token = async (changes = {}, key = pair.privateKey) => new SignJWT({ role:
 function response() { return { code: 0, headers: {}, body: null,
   setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
   status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } }; }
-function fixture({ envOverride = env, upstreamError = false, malformed = false } = {}) {
+function fixture({ envOverride = env, upstreamError = false, malformed = false,
+  unexpectedOwner = false, transferBeforeWrite } = {}) {
   let recordCalls = 0; const targets = []; const records = new Map(rows.map(row => [row.id, { ...row }]));
   const handler = createNotesHandler({ env: envOverride, judgeKeySet, fetchImpl: async (url, init) => {
     const target = new URL(url); targets.push(target.pathname);
@@ -38,11 +39,15 @@ function fixture({ envOverride = env, upstreamError = false, malformed = false }
     assert.equal(new Headers(init.headers).get('apikey'), fakeKey);
     if (upstreamError) return Response.json({ message: fakeKey, code: '42501' }, { status: 403 });
     if (malformed) return Response.json([{ title: 'bad' }]);
+    if (unexpectedOwner) return Response.json([rows[2]]);
+    const method = init.method || 'GET';
+    if (transferBeforeWrite && ['PATCH', 'DELETE'].includes(method)) {
+      records.get(rows[0].id).owner_id = transferBeforeWrite;
+    }
     const matches = row => ['id', 'owner_id'].every(field => {
       const filter = target.searchParams.get(field); return !filter || `eq.${row[field]}` === filter;
     });
     let result = [...records.values()].filter(matches);
-    const method = init.method || 'GET';
     if (method === 'POST') {
       const value = JSON.parse(init.body);
       if (records.has(value.id)) return Response.json({ code: '23505', message: fakeKey }, { status: 409 });
@@ -114,7 +119,7 @@ test('CRUD supports generated/supplied UUIDs, server-owned creation, safe update
   const id = created.body.id; assert.match(id, /^[a-f0-9-]{36}$/u);
   assert.equal(f.records.get(id).owner_id, userId);
   assert.deepEqual((await call(f, auth, 'GET', `/api/notes/${id}`)).body, { id, title: '새 연습', body: '가상 내용' });
-  const updated = await call(f, auth, 'PUT', `/api/notes/${id}`, { id, title: '수정 연습', body: '<script>text only</script>', owner_id: otherId });
+  const updated = await call(f, auth, 'PUT', `/api/notes/${id}`, { title: '수정 연습', body: '<script>text only</script>' });
   assert.equal(updated.code, 200); assert.equal(updated.body.body, '<script>text only</script>');
   assert.equal(f.records.get(id).owner_id, userId);
   assert.equal((await call(f, auth, 'DELETE', `/api/notes/${id}`)).code, 200);
@@ -140,13 +145,74 @@ test('invalid JSON/fields, oversized bodies, invalid UUIDs and mismatched update
   assert.equal((await call(f, auth, 'POST', `/api/notes/${rows[0].id}`, { title: 'a', body: '' })).code, 405);
 });
 
-test('stage 3 documented gap: authenticated B can access A by ID; own list and stored owner still stay account-scoped', async () => {
-  const f = fixture(); const b = `Bearer ${await token({ sub: otherId })}`;
-  assert.deepEqual((await call(f, b)).body, rows.filter(row => row.owner_id === otherId).map(safe));
-  assert.equal((await call(f, b, 'GET', `/api/notes/${rows[0].id}`)).code, 200);
-  assert.equal((await call(f, b, 'PUT', `/api/notes/${rows[0].id}`, { title: '가상 교차 수정', body: '4단계에서 차단할 허점' })).code, 200);
-  assert.equal(f.records.get(rows[0].id).owner_id, userId);
-  assert.equal((await call(f, b, 'DELETE', `/api/notes/${rows[0].id}`)).code, 200);
+test('stage 4: A and B each keep own CRUD; client owner/user/role cannot choose the inserted owner', async () => {
+  const f = fixture();
+  for (const [owner, other] of [[userId, otherId], [otherId, userId]]) {
+    const auth = `Bearer ${await token({ sub: owner })}`;
+    assert.deepEqual((await call(f, auth)).body, rows.filter(row => row.owner_id === owner).map(safe));
+    const created = await call(f, auth, 'POST', `/api/notes?owner_id=${other}`, {
+      title: '가상 작성', body: '가상 내용', owner_id: other, userId: other, role: 'admin',
+    }, { 'x-user-id': other });
+    assert.equal(created.code, 201);
+    const id = created.body.id;
+    assert.equal(f.records.get(id).owner_id, owner);
+    const one = await call(f, auth, 'GET', `/api/notes/${id}`);
+    assert.equal(one.code, 200); assert.deepEqual(Object.keys(one.body).sort(), ['body', 'id', 'title']);
+    const updated = await call(f, auth, 'PUT', `/api/notes/${id}`, { title: '수정', body: '수정 내용' });
+    assert.equal(updated.code, 200); assert.equal(updated.body.body, '수정 내용');
+    assert.equal(f.records.get(id).owner_id, owner);
+    assert.equal((await call(f, auth, 'DELETE', `/api/notes/${id}`)).code, 200);
+    assert.equal((await call(f, auth, 'GET', `/api/notes/${id}`)).code, 404);
+  }
+});
+
+test('stage 4: both directions deny cross-account and unowned single GET/PUT/DELETE without changing any row', async () => {
+  const f = fixture();
+  const original = structuredClone([...f.records.values()]);
+  for (const [owner, victim] of [[userId, rows[2]], [otherId, rows[0]]]) {
+    const auth = `Bearer ${await token({ sub: owner })}`;
+    for (const row of [victim, rows[3]]) {
+      for (const method of ['GET', 'PUT', 'DELETE']) {
+        const res = await call(f, auth, method, `/api/notes/${row.id}?owner_id=${row.owner_id}&userId=${row.owner_id}`,
+          { title: '변경 시도', body: '변경 시도', userId: row.owner_id, role: 'admin' },
+          { 'x-user-id': row.owner_id ?? userId, role: 'admin' });
+        assert.equal(res.code, 404); assert.deepEqual(res.body, { error: 'NOT_FOUND' });
+      }
+    }
+  }
+  assert.deepEqual([...f.records.values()], original);
+});
+
+test('stage 4: PUT rejects owner_id fields and cannot transfer, clear or claim ownership', async () => {
+  const f = fixture();
+  for (const [owner, row, other] of [[userId, rows[0], otherId], [otherId, rows[2], userId]]) {
+    const auth = `Bearer ${await token({ sub: owner })}`;
+    for (const owner_id of [other, null, owner]) {
+      const res = await call(f, auth, 'PUT', `/api/notes/${row.id}`, { title: '변경', body: '', owner_id });
+      assert.equal(res.code, 400); assert.deepEqual(res.body, { error: 'INVALID_NOTE' });
+    }
+    assert.deepEqual(f.records.get(row.id), row);
+  }
+  assert.equal(f.recordCalls, 0);
+});
+
+test('stage 4: writes match the current owner in the same DB statement even if ownership changed first', async () => {
+  for (const method of ['PUT', 'DELETE']) {
+    const f = fixture({ transferBeforeWrite: otherId });
+    const res = await call(f, `Bearer ${await token()}`, method, `/api/notes/${rows[0].id}`, { title: '변경', body: '' });
+    assert.equal(res.code, 404);
+    assert.deepEqual(f.records.get(rows[0].id), { ...rows[0], owner_id: otherId });
+    assert.equal(f.recordCalls, 1);
+  }
+});
+
+test('stage 4: an unexpected foreign row in an upstream response is never sent to the browser', async () => {
+  const f = fixture({ unexpectedOwner: true });
+  for (const [method, path] of [['GET', '/api/notes'], ['GET', `/api/notes/${rows[0].id}`],
+    ['PUT', `/api/notes/${rows[0].id}`], ['DELETE', `/api/notes/${rows[0].id}`]]) {
+    const res = await call(f, `Bearer ${await token()}`, method, path, { title: '가상', body: '' });
+    assert.equal(res.code, 502); assert.deepEqual(res.body, { error: 'NOTES_UNAVAILABLE' });
+  }
 });
 
 test('configuration and DB failures never echo server keys or upstream diagnostics', async () => {

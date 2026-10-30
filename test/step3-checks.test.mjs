@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { checkStep3 } from '../src/step3-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
 const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+// This historical suite checks stage 3 even after the active deployment advances.
+config.step = 3;
 function remote(failure) {
   return async (url, init) => {
     const path = new URL(url).pathname;
