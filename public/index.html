@@ -61,6 +61,12 @@
       </form>
       <p id="memo-message" role="status"></p>
       <ul id="notes" aria-live="polite" hidden></ul>
+      <details>
+        <summary>4단계 접근 확인</summary>
+        <p>A·B 연습 계정에서 내 시험 메모를 읽을 수 있고 상대 시험 메모는 읽을 수 없는지 확인합니다. 메모는 변경하지 않습니다.</p>
+        <button id="owner-check" type="button" disabled>상대 메모 조회 차단 확인</button>
+        <p id="owner-check-result" role="status"></p>
+      </details>
     </section>
   </main>
   <script src="/vendor/supabase.js" defer></script>

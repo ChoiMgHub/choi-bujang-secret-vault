@@ -15,6 +15,8 @@
   const memoSave = document.querySelector('#memo-save');
   const memoCancel = document.querySelector('#memo-cancel');
   const memoMessage = document.querySelector('#memo-message');
+  const ownerCheck = document.querySelector('#owner-check');
+  const ownerCheckResult = document.querySelector('#owner-check-result');
   let busy = false;
   let memoBusy = false;
   let activeSession = null;
@@ -31,7 +33,7 @@
   }
   function setMemoBusy(value) {
     memoBusy = value;
-    for (const control of [memoTitle, memoBody, memoSave, memoCancel, ...cardButtons]) {
+    for (const control of [memoTitle, memoBody, memoSave, memoCancel, ownerCheck, ...cardButtons]) {
       control.disabled = value || !activeSession;
     }
   }
@@ -68,6 +70,44 @@
   }
   function validNote(note) {
     return note && typeof note.id === 'string' && typeof note.title === 'string' && typeof note.body === 'string';
+  }
+  async function checkOwnerRead() {
+    if (memoBusy || !activeSession) return;
+    const fixtures = {
+      'learner-a@example.com': ['10000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000001'],
+      'learner-b@example.com': ['20000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001'],
+    };
+    const ids = fixtures[activeSession.user.email?.toLowerCase()];
+    if (!ids) { ownerCheckResult.textContent = '이 확인은 A·B 연습 계정 전용입니다.'; return; }
+    const version = renderVersion;
+    const session = activeSession;
+    const controller = new AbortController();
+    setMemoBusy(true); ownerCheckResult.textContent = '내 메모와 상대 메모의 조회 응답을 확인하는 중입니다.';
+    try {
+      const own = await api(`/api/notes/${ids[0]}`, { session, version });
+      if (!validNote(own) || own.id !== ids[0]) throw new Error('missing_fixture');
+      requests.add(controller);
+      const response = await fetch(`/api/notes/${ids[1]}`, { method: 'GET', cache: 'no-store',
+        headers: { Authorization: `Bearer ${session.access_token}` }, signal: controller.signal });
+      if (version !== renderVersion) throw staleView();
+      let payload;
+      if (response.status === 404 && response.headers.get('content-type')?.includes('application/json')) {
+        try { payload = await response.json(); } catch { /* Not a verified denial. */ }
+      }
+      if (version !== renderVersion) throw staleView();
+      const denied = response.status === 404 && payload?.error === 'NOT_FOUND'
+        && Object.keys(payload).length === 1;
+      ownerCheckResult.textContent = denied
+        ? '확인 완료: 내 메모 조회 200 / 상대 메모 조회 404(접근 거부). A·B 두 계정에서 각각 확인하세요.'
+        : `확인 필요: 상대 메모 조회 HTTP ${response.status}. 차단 성공으로 기록하지 않았습니다.`;
+    } catch (error) {
+      if (version === renderVersion && error.name !== 'AbortError') {
+        ownerCheckResult.textContent = '확인하지 못했습니다. 내 시험 메모가 있는지 확인하고 다시 로그인해 주세요.';
+      }
+    } finally {
+      requests.delete(controller);
+      if (version === renderVersion) setMemoBusy(false);
+    }
   }
   async function editNote(note) {
     if (memoBusy) return;
@@ -145,6 +185,7 @@
     for (const controller of requests) controller.abort();
     requests.clear();
     activeSession = session;
+    ownerCheckResult.textContent = '';
     notes.replaceChildren(); cardButtons = [];
     const signedIn = Boolean(session?.user?.id);
     panel.hidden = !signedIn;
@@ -173,6 +214,7 @@
     );
     client.auth.onAuthStateChange((_event, session) => renderSession(session));
     setBusy(false);
+    ownerCheck.addEventListener('click', checkOwnerRead);
     form.addEventListener('submit', async event => {
       event.preventDefault(); if (busy) return;
       errorBox.textContent = ''; setBusy(true);

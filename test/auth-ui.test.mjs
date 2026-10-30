@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 const source = await readFile(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
 function ui(factory, fetchImpl = async () => Response.json([{ id: '10000000-0000-4000-8000-000000000001', title: '<img src=x onerror=alert(1)>', body: '가상 메모' }])) {
   const elements = new Map();
-  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes', 'memo-panel', 'memo-form', 'memo-title', 'memo-body', 'memo-save', 'memo-cancel', 'memo-message']) {
+  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes', 'memo-panel', 'memo-form', 'memo-title', 'memo-body', 'memo-save', 'memo-cancel', 'memo-message', 'owner-check', 'owner-check-result']) {
     elements.set(`#${id}`, { value: '', textContent: '', hidden: id === 'login-form' || id === 'logout-button', disabled: false,
       children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; }, events: {}, addEventListener(name, handler) { this.events[name] = handler; } });
   }
@@ -17,12 +17,13 @@ function ui(factory, fetchImpl = async () => Response.json([{ id: '10000000-0000
   vm.runInNewContext(source, { window, document: { querySelector: id => elements.get(id), createElement: () => ({ textContent: '', children: [], events: {}, addEventListener(name, handler) { this.events[name] = handler; }, append(...items) { this.children.push(...items); } }) }, fetch: fetchImpl, AbortController });
   return { get: id => elements.get(`#${id}`), storageData, storage,
     submit: () => elements.get('#login-form').events.submit({ preventDefault() {} }),
-    logout: () => elements.get('#logout-button').events.click() };
+    logout: () => elements.get('#logout-button').events.click(),
+    checkOwner: () => elements.get('#owner-check').events.click() };
 }
-function stub() {
+function stub(email = 'learner-a@example.com') {
   let listener;
   const state = { loginCalls: 0, logoutCalls: 0, loginError: null, logoutError: null, wait: null };
-  const user = { id: '10000000-0000-4000-8000-000000000001', email: 'learner-a@example.com' };
+  const user = { id: '10000000-0000-4000-8000-000000000001', email };
   const factory = (_url, key, options) => {
     assert.ok(key.startsWith('sb_publishable_'));
     assert.equal(options.auth.detectSessionInUrl, false);
@@ -31,7 +32,7 @@ function stub() {
       onAuthStateChange(callback) { listener = callback; callback('INITIAL_SESSION', null); },
       async signInWithPassword(credentials) {
         state.loginCalls++;
-        assert.equal(credentials.email, 'learner-a@example.com');
+        assert.equal(credentials.email, user.email);
         assert.equal(credentials.password, 'test-input');
         if (state.wait) await state.wait;
         if (state.loginError) return { error: state.loginError };
@@ -199,4 +200,56 @@ test('failed memo write preserves the draft and shows a safe input error', async
   await view.get('memo-form').events.submit({ preventDefault() {} });
   assert.equal(view.get('memo-title').value, '초안 유지');
   assert.match(view.get('memo-message').textContent, /200자/u);
+});
+
+test('stage 4 read-only check uses A/B fixture IDs, never writes and shows no note text or token', async () => {
+  const a = '10000000-0000-4000-8000-000000000001';
+  const b = '20000000-0000-4000-8000-000000000001';
+  for (const [email, own, other] of [['learner-a@example.com',a,b],['learner-b@example.com',b,a]]) {
+    const { factory } = stub(email); const calls = [];
+    const view = ui(factory, async (url, init) => {
+      calls.push(url); assert.equal(init.method, 'GET'); assert.equal(init.body, undefined);
+      assert.equal(init.headers.Authorization, 'Bearer local-test-session');
+      if (url === '/api/notes') return Response.json([]);
+      if (url === `/api/notes/${own}`) return Response.json({ id: own, title: 'must not show', body: 'must not show' });
+      assert.equal(url, `/api/notes/${other}`);
+      return Response.json({ error: 'NOT_FOUND' }, { status: 404 });
+    });
+    fill(view); view.get('login-email').value = email; await view.submit();
+    await new Promise(resolve => setImmediate(resolve));
+    await view.checkOwner();
+    assert.match(view.get('owner-check-result').textContent, /확인 완료.*200.*404/u);
+    assert.ok(calls.includes(`/api/notes/${own}`)); assert.ok(calls.includes(`/api/notes/${other}`));
+    assert.doesNotMatch(view.get('owner-check-result').textContent, /must not show|local-test-session/u);
+    await view.logout(); assert.equal(view.get('owner-check-result').textContent, '');
+  }
+});
+
+test('stage 4 read-only check never claims success for missing own fixture or readable foreign data', async () => {
+  for (const ownMissing of [false, true]) {
+    const { factory } = stub();
+    const view = ui(factory, async (url) => {
+      if (url === '/api/notes') return Response.json([]);
+      if (ownMissing) return Response.json({ error: 'NOT_FOUND' }, { status: 404 });
+      return Response.json({ id: url.split('/').at(-1), title: 'unshown foreign title', body: 'unshown foreign body' });
+    });
+    fill(view); await view.submit(); await new Promise(resolve => setImmediate(resolve));
+    await view.checkOwner();
+    assert.doesNotMatch(view.get('owner-check-result').textContent, /확인 완료|unshown/u);
+  }
+});
+
+test('stage 4 read-only check cannot restore its result after logout while an HTTP response is pending', async () => {
+  const { factory } = stub(); let release;
+  const view = ui(factory, async url => {
+    if (url === '/api/notes') return Response.json([]);
+    if (url.endsWith('10000000-0000-4000-8000-000000000001')) return Response.json({ id: url.split('/').at(-1), title: 'own', body: 'own' });
+    return new Promise(resolve => { release = resolve; });
+  });
+  fill(view); await view.submit(); await new Promise(resolve => setImmediate(resolve));
+  const pending = view.checkOwner(); await new Promise(resolve => setImmediate(resolve));
+  assert.ok(release); await view.logout();
+  release(Response.json({ error: 'NOT_FOUND' }, { status: 404 })); await pending;
+  assert.equal(view.get('owner-check-result').textContent, '');
+  assert.equal(view.get('memo-panel').hidden, true);
 });

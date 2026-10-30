@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 // Submission self-check only: never a replacement for src/verify-login.mjs.
 // These requests verify anonymous denial and deployment metadata, not signed-in CRUD.
-export async function checkStep3(config, { fetchImpl = globalThis.fetch } = {}) {
+export async function checkStep3(config, { fetchImpl = globalThis.fetch, expectedStep = 3 } = {}) {
+  if (![3, 4].includes(expectedStep)) throw new Error('지원하는 로그인 점검 단계는 3 또는 4입니다.');
   const app = new URL(config.publicAppUrl);
   if (app.protocol !== 'https:' || app.username || app.password || app.search || app.hash || app.pathname !== '/') {
     throw new Error('실제 HTTPS 배포 주소를 확인하세요.');
@@ -29,14 +30,14 @@ export async function checkStep3(config, { fetchImpl = globalThis.fetch } = {}) 
   let identity;
   try { identity = await identityResponse.json(); } catch { /* fail */ }
   const normalized = value => typeof value === 'string' ? value.replace(/\/$/u, '').toLowerCase() : '';
-  const matches = identityResponse.status === 200 && identity?.step === 3
+  const matches = identityResponse.status === 200 && identity?.step === expectedStep
     && identity.schema === 'aleph.defense.deployment.v1'
     && normalized(identity.repoUrl) === normalized(config.repoUrl)
     && /^[a-f0-9]{40}$/u.test(identity.commit || '')
     && (!config.expectedCommit || identity.commit === config.expectedCommit)
     && identity.judgeIssuer === config.judgeIssuer;
   checks.push({ attackId: 'deployment_identity', passed: matches,
-    expected: '3단계·저장소·제출 커밋·심판 발급자 일치', observed: `aleph.json HTTP ${identityResponse.status}, 일치 ${matches}` });
+    expected: `${expectedStep}단계·저장소·제출 커밋·심판 발급자 일치`, observed: `aleph.json HTTP ${identityResponse.status}, 일치 ${matches}` });
   // A newly generated, unused ID avoids touching a real memo even if a broken API permits a request.
   const path = `/api/notes/${randomUUID()}`;
   const probes = [

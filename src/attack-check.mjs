@@ -2,7 +2,14 @@
 // Never return tokens, private keys, real names, or note bodies.
 import { checkStep2 } from './step2-checks.mjs';
 import { checkStep3 } from './step3-checks.mjs';
+import { checkStep4 } from './step4-checks.mjs';
 export async function runAttackChecks(config) {
+  if (config.step === 4) {
+    const checks = await checkStep4(config);
+    const failed = checks.find(check => !check.passed);
+    if (failed) throw new Error(`4단계 점검 실패: ${failed.attackId} (${failed.observed})`);
+    return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
+  }
   if (config.step === 3) {
     const checks = await checkStep3(config);
     const failed = checks.find(check => !check.passed);
