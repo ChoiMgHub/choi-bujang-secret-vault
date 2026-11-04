@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import deploymentConfig from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
+import { cookieAuthorization, trustedBrowserRequest, usesCookieAuthorization } from '../src/browser-session.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 // owner_id is checked internally and never included in the public note response.
@@ -36,9 +37,12 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    const authorization = request.headers?.authorization;
+    const authorization = cookieAuthorization(request);
     if (typeof authorization !== 'string' || !authorization) {
       return response.status(401).json({ error: 'AUTH_REQUIRED' });
+    }
+    if (usesCookieAuthorization(request) && !trustedBrowserRequest(request, config)) {
+      return response.status(403).json({ error: 'ORIGIN_NOT_ALLOWED' });
     }
     const url = typeof env.SUPABASE_URL === 'string' ? env.SUPABASE_URL.trim() : '';
     const key = typeof env.SUPABASE_SECRET_KEY === 'string' ? env.SUPABASE_SECRET_KEY.trim() : '';

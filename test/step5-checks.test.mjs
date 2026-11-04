@@ -5,14 +5,14 @@ import { checkStep5 } from '../src/step5-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
 
 const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
-const source = await readFile(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
+const source = await readFile(new URL('../src/supabase-public.mjs', import.meta.url), 'utf8');
 const commit = 'a'.repeat(40);
 const originalUrl = new URL(config.originalApiUrl);
-function remote({ direct = 'denied', step = 5, sha = commit } = {}) {
+function remote({ direct = 'denied', step = 5, sha = commit, assets = 'clean', session = 'clean' } = {}) {
   return async (target, init) => {
     const url = new URL(target);
     assert.equal(init.redirect, 'error');
-    assert.equal(init.body, undefined);
+    if (!(url.pathname === '/api/auth' && init.method === 'POST')) assert.equal(init.body, undefined);
     if (url.origin === originalUrl.origin) {
       assert.equal(url.pathname, originalUrl.pathname);
       assert.equal(url.search, '?select=id&limit=1');
@@ -29,7 +29,17 @@ function remote({ direct = 'denied', step = 5, sha = commit } = {}) {
       return Response.json({ code: '42501', message: 'fixture diagnostic', details: null, hint: null }, { status: 401 });
     }
     assert.equal(url.origin, new URL(config.publicAppUrl).origin);
-    if (url.pathname === '/') return new Response('<form id="login-form"></form><form id="memo-form"></form><ul id="notes" aria-live="polite" hidden></ul>', { headers: { 'x-content-type-options': 'nosniff' } });
+    if (url.pathname === '/') return new Response('<form id="login-form"></form><form id="memo-form"></form><ul id="notes" aria-live="polite" hidden></ul><script src="/auth-ui.js"></script>', { headers: { 'x-content-type-options': 'nosniff' } });
+    if (url.pathname === '/auth-ui.js') return new Response(assets === 'leak' ? 'const key="sb_publishable_fixture";' : 'fetch("/api/auth");');
+    if (url.pathname === '/vendor/supabase.js') return new Response(null, { status: assets === 'sdk' ? 200 : 404 });
+    if (url.pathname === '/api/auth') {
+      if (init.method === 'POST') {
+        assert.equal(init.body, '{}');
+        const same = init.headers.origin === new URL(config.publicAppUrl).origin;
+        return Response.json({ error: same ? 'INVALID_INPUT' : 'ORIGIN_NOT_ALLOWED' }, { status: same ? 400 : 403 });
+      }
+      return Response.json(session === 'leak' ? { user: null, access_token: 'fixture' } : { user: null }, { headers: { 'cache-control': 'private, no-store' } });
+    }
     if (url.pathname === '/data.json') return new Response(null, { status: 404 });
     if (url.pathname === '/aleph.json') return Response.json({ schema: 'aleph.defense.deployment.v1',
       step, commit: sha, repoUrl: config.repoUrl, judgeIssuer: config.judgeIssuer });
@@ -39,12 +49,20 @@ function remote({ direct = 'denied', step = 5, sha = commit } = {}) {
 
 test('stage 5 checker validates deployment and probes configured original API with public key only', async () => {
   const checks = await checkStep5({ ...config, expectedCommit: commit }, { fetchImpl: remote() });
-  assert.equal(checks.length, 11);
+  assert.equal(checks.length, 16);
   assert.ok(checks.every(check => check.passed));
   assert.ok(!JSON.stringify(checks).includes('fixture diagnostic'));
   for (const opts of [{ step: 4 }, { sha: 'b'.repeat(40) }]) {
     const failed = await checkStep5({ ...config, expectedCommit: commit }, { fetchImpl: remote(opts) });
     assert.equal(failed.find(check => check.attackId === 'deployment_identity').passed, false);
+  }
+});
+
+test('stage 5 bonus checks fail for leaked browser keys, cached SDK files and session token responses', async () => {
+  for (const [opts, attackId] of [[{ assets: 'leak' }, 'browser_public_key_absent'],
+    [{ assets: 'sdk' }, 'browser_sdk_removed'], [{ session: 'leak' }, 'anonymous_server_session']]) {
+    const checks = await checkStep5(config, { fetchImpl: remote(opts) });
+    assert.equal(checks.find(check => check.attackId === attackId).passed, false);
   }
 });
 
@@ -75,7 +93,7 @@ test('stage 5 bundle uses redacted observations and refuses a failed original-AP
   try {
     globalThis.fetch = remote();
     const attempts = await runAttackChecks({ ...config, expectedCommit: commit });
-    assert.equal(attempts.length, 11);
+    assert.equal(attempts.length, 16);
     assert.ok(attempts.every(item => Object.keys(item).sort().join(',') === 'attackId,expected,observed'));
     assert.ok(!JSON.stringify(attempts).includes('fixture diagnostic'));
     assert.ok(!JSON.stringify(attempts).includes('sb_publishable_'));

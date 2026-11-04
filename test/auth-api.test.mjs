@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createNotesHandler } from '../api/notes.js';
+import { ACCESS_COOKIE } from '../src/browser-session.mjs';
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from 'jose';
 
 const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
@@ -79,6 +80,47 @@ test('all list and single-note methods require login; browser identity spoofing 
     assert.equal(res.headers['cache-control'], 'no-store');
   }
   assert.equal(f.recordCalls, 0); assert.equal(f.targets.length, 0);
+});
+
+test('browser cookie requests use the unchanged signature verifier and preserve each owner CRUD boundary', async () => {
+  const f = fixture();
+  for (const [owner, otherNote] of [[userId, rows[2].id], [otherId, rows[0].id]]) {
+    const headers = { cookie: `${ACCESS_COOKIE}=${await token({ sub: owner })}`,
+      'x-requested-with': 'vault-ui', origin: new URL(config.publicAppUrl).origin };
+    const list = await call(f, null, 'GET', '/api/notes', undefined, headers);
+    assert.equal(list.code, 200);
+    assert.ok(list.body.every(note => f.records.get(note.id).owner_id === owner));
+    for (const method of ['GET', 'PUT', 'DELETE']) {
+      const denied = await call(f, null, method, `/api/notes/${otherNote}`, { title: 'x', body: 'x' }, headers);
+      assert.equal(denied.code, 404);
+    }
+    const created = await call(f, null, 'POST', '/api/notes', { title: 'cookie fixture', body: '', owner_id: otherId }, headers);
+    assert.equal(created.code, 201); const id = created.body.id;
+    assert.equal(f.records.get(id).owner_id, owner);
+    assert.equal((await call(f, null, 'PUT', `/api/notes/${id}`, { title: 'updated', body: '' }, headers)).code, 200);
+    assert.equal((await call(f, null, 'DELETE', `/api/notes/${id}`, undefined, headers)).code, 200);
+    assert.equal((await call(f, null, 'GET', `/api/notes/${id}`, undefined, headers)).code, 404);
+  }
+});
+
+test('cookie transport rejects forged/duplicate tokens and CSRF without weakening bearer checks', async () => {
+  const f = fixture(); const signed = await token();
+  const valid = { cookie: `${ACCESS_COOKIE}=${signed}`, 'x-requested-with': 'vault-ui', origin: new URL(config.publicAppUrl).origin };
+  for (const method of ['POST', 'PUT', 'DELETE']) {
+    const path = method === 'POST' ? '/api/notes' : `/api/notes/${rows[0].id}`;
+    for (const change of [{ origin: 'https://other.example' }, { origin: undefined },
+      { 'x-requested-with': undefined }, { 'sec-fetch-site': 'cross-site' }]) {
+      assert.equal((await call(f, null, method, path, { title: 'x', body: '' }, { ...valid, ...change })).code, 403);
+    }
+  }
+  assert.equal(f.recordCalls, 0);
+  const forged = { ...valid, cookie: `${ACCESS_COOKIE}=${await token({}, attacker.privateKey)}` };
+  assert.equal((await call(f, null, 'GET', '/api/notes', undefined, forged)).code, 401);
+  const duplicate = { ...valid, cookie: `${valid.cookie}; ${valid.cookie}` };
+  assert.equal((await call(f, null, 'GET', '/api/notes', undefined, duplicate)).code, 401);
+  assert.equal((await call(f, 'Bearer not-a-token', 'GET', '/api/notes', undefined, valid)).code, 401);
+  assert.equal(f.recordCalls, 0);
+  assert.equal((await call(f, `Bearer ${signed}`)).code, 200);
 });
 
 test('unchanged verifier and SDK verify the signature; list returns only verified user records as id/title/body', async () => {

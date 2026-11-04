@@ -14,7 +14,7 @@ try {
   await writeFile(new URL('artifacts/step5-verification.json', root), JSON.stringify({
     checkedAt: new Date().toISOString(), commit: config.expectedCommit,
     publicAppUrl: config.publicAppUrl, checks,
-    scope: '실제 HTTP: 미인증·무효 토큰 거부, 공개 키의 원본 DB 직접 읽기 거부, 배포 확인. A/B 정상 사용과 authenticated 권한은 사용자 별도 확인.',
+    scope: '실제 HTTP: 미인증·무효 토큰 거부, 원본 DB 직접 읽기 거부, 화면 키와 SDK 제거, 익명 세션·입력·출처 검사, 배포 확인. 실제 계정의 새 쿠키 로그인·CRUD는 사용자 별도 확인.',
   }, null, 2) + '\n');
   if (checks.some(check => !check.passed)) throw new Error('미통과 항목을 확인하세요.');
   console.log('STEP 5 ANONYMOUS/ORIGINAL-API SELF-CHECK PASSED (포털 심판 판정과 별도)');

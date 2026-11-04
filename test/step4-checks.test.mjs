@@ -7,7 +7,7 @@ import { runAttackChecks } from '../src/attack-check.mjs';
 const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
 // Keep this suite about the historical stage 4 deployment contract.
 config.step = 4;
-const publicSource = await readFile(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
+const serverSource = await readFile(new URL('../src/supabase-public.mjs', import.meta.url), 'utf8');
 const commit = 'a'.repeat(40);
 function remote({ direct = 'denied', step = 4 } = {}) {
   return async (target, init) => {
@@ -18,7 +18,7 @@ function remote({ direct = 'denied', step = 4 } = {}) {
       assert.equal(url.search, '?select=id&limit=1'); assert.equal(init.method, 'GET');
       assert.equal(Object.keys(init.headers).join(','), 'apikey');
       assert.ok(init.headers.apikey.startsWith('sb_publishable_'));
-      assert.ok(publicSource.includes(init.headers.apikey));
+      assert.ok(serverSource.includes(init.headers.apikey));
       if (direct === 'allowed') return Response.json([{ id: 'not-secret-fixture' }]);
       if (direct === 'invalid_key') return Response.json({ code: 'PGRST301', message: 'invalid API key' }, { status: 401 });
       if (direct === 'html') return new Response('not JSON', { status: 403 });

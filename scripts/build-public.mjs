@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { deploymentIdentity } from './deployment-identity.mjs';
 
@@ -10,12 +10,28 @@ if (!Number.isInteger(config.step) || config.step < 1 || config.step > 12) {
   throw new Error('aleph.config.json의 단계는 1~12 정수여야 합니다.');
 }
 await mkdir(resolve(root, 'public'), { recursive: true });
-// Ship the pinned official browser SDK locally; no server environment values enter it.
-await mkdir(resolve(root, 'public', 'vendor'), { recursive: true });
-await copyFile(resolve(root, 'node_modules/@supabase/supabase-js/dist/umd/supabase.js'),
-  resolve(root, 'public/vendor/supabase.js'));
-await copyFile(resolve(root, 'node_modules/@supabase/supabase-js/LICENSE'),
-  resolve(root, 'public/vendor/SUPABASE-LICENSE.txt'));
+if (config.step < 5) {
+  await mkdir(resolve(root, 'public', 'vendor'), { recursive: true });
+  await copyFile(resolve(root, 'node_modules/@supabase/supabase-js/dist/umd/supabase.js'),
+    resolve(root, 'public/vendor/supabase.js'));
+  await copyFile(resolve(root, 'node_modules/@supabase/supabase-js/LICENSE'),
+    resolve(root, 'public/vendor/SUPABASE-LICENSE.txt'));
+} else {
+  // Auth now runs in the server function, including SDK session refresh.
+  await rm(resolve(root, 'public', 'vendor'), { recursive: true, force: true });
+  const forbidden = /sb_publishable_[A-Za-z0-9_-]{8,}|sb_secret_[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/u;
+  async function scan(directory) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) await scan(path);
+      else if (/\.(?:html|js|json|map|css)$/u.test(entry.name)
+          && forbidden.test(await readFile(path, 'utf8'))) {
+        throw new Error('브라우저 배포 파일에 키 또는 토큰 모양의 값이 있습니다.');
+      }
+    }
+  }
+  await scan(resolve(root, 'public'));
+}
 if (config.step === 1) {
   const data = JSON.parse(await readFile(source, 'utf8'));
   if (!Array.isArray(data.notes)) throw new Error('실습용 공개 자료 형식을 확인하세요.');

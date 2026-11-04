@@ -1,4 +1,4 @@
-// Public connection information only. The official SDK owns passwords and sessions.
+// Authentication stays on the server. The browser receives user metadata only.
 (() => {
   const form = document.querySelector('#login-form');
   const email = document.querySelector('#login-email');
@@ -20,6 +20,9 @@
   let busy = false;
   let memoBusy = false;
   let activeSession = null;
+  let restorePromise = null;
+  let refreshTimer;
+  let loggingOut = false;
   let editingId = null;
   let renderVersion = 0;
   const requests = new Set();
@@ -53,14 +56,20 @@
     return '서버에서 메모를 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
   }
   async function api(path, { method = 'GET', data, session = activeSession, version = renderVersion } = {}) {
-    if (!session?.access_token || version !== renderVersion) throw staleView();
+    if (!session?.user?.id || version !== renderVersion) throw staleView();
     const controller = new AbortController();
     requests.add(controller);
     try {
-      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const headers = { 'x-requested-with': 'vault-ui' };
       if (data !== undefined) headers['Content-Type'] = 'application/json';
-      const response = await fetch(path, { method, cache: 'no-store', headers,
+      let response = await fetch(path, { method, credentials: 'same-origin', cache: 'no-store', headers,
         body: data === undefined ? undefined : JSON.stringify(data), signal: controller.signal });
+      if (response.status === 401 && version === renderVersion) {
+        const fresh = await restoreSession(true);
+        if (!fresh?.user || fresh.user.id !== session.user.id || version !== renderVersion) throw staleView();
+        response = await fetch(path, { method, credentials: 'same-origin', cache: 'no-store', headers,
+          body: data === undefined ? undefined : JSON.stringify(data), signal: controller.signal });
+      }
       if (version !== renderVersion) throw staleView();
       if (!response.ok) throw new Error(apiError(response.status));
       const payload = await response.json();
@@ -87,8 +96,8 @@
       const own = await api(`/api/notes/${ids[0]}`, { session, version });
       if (!validNote(own) || own.id !== ids[0]) throw new Error('missing_fixture');
       requests.add(controller);
-      const response = await fetch(`/api/notes/${ids[1]}`, { method: 'GET', cache: 'no-store',
-        headers: { Authorization: `Bearer ${session.access_token}` }, signal: controller.signal });
+      const response = await fetch(`/api/notes/${ids[1]}`, { method: 'GET', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'x-requested-with': 'vault-ui' }, signal: controller.signal });
       if (version !== renderVersion) throw staleView();
       let payload;
       if (response.status === 404 && response.headers.get('content-type')?.includes('application/json')) {
@@ -184,6 +193,7 @@
     const version = ++renderVersion;
     for (const controller of requests) controller.abort();
     requests.clear();
+    clearTimeout(refreshTimer);
     activeSession = session;
     ownerCheckResult.textContent = '';
     notes.replaceChildren(); cardButtons = [];
@@ -196,74 +206,99 @@
     password.value = '';
     if (!signedIn || previousUser !== session.user.id) { resetEditor(); memoMessage.textContent = ''; }
     setMemoBusy(false);
-    // This synchronous auth callback does not make any SDK calls.
-    if (signedIn && session.access_token) void loadNotes(session, version);
+    if (signedIn) { scheduleSession(session); void loadNotes(session, version); }
   }
   function loginError(error) {
-    if (error?.code === 'invalid_credentials') return '이메일 또는 비밀번호를 확인해 주세요.';
-    if (error?.code === 'email_not_confirmed') return '이메일 확인이 완료되지 않은 계정입니다. Supabase에서 계정 확인 상태를 확인해 주세요.';
+    if (error?.code === 'INVALID_CREDENTIALS') return '이메일 또는 비밀번호를 확인해 주세요.';
+    if (error?.code === 'EMAIL_NOT_CONFIRMED') return '이메일 확인이 완료되지 않은 계정입니다.';
     if (error?.status === 429) return '로그인 요청이 많습니다. 잠시 기다린 뒤 다시 시도해 주세요.';
-    if (error?.name === 'AuthRetryableFetchError' || error instanceof TypeError) return '인증 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.';
+    if (error?.code === 'AUTH_UNAVAILABLE' || error instanceof TypeError) return '인증 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.';
     return '로그인에 실패했습니다. 계정 설정을 확인하거나 잠시 후 다시 시도해 주세요.';
   }
-  try {
-    const client = window.supabase.createClient(
-      'https://prplojzcswmpaqhcnmwl.supabase.co',
-      'sb_publishable_z3tY48lOSOJ8NqLhTpuTXg_aNgHDGKd',
-      { auth: { storage: window.sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } },
-    );
-    client.auth.onAuthStateChange((_event, session) => renderSession(session));
-    setBusy(false);
-    ownerCheck.addEventListener('click', checkOwnerRead);
-    form.addEventListener('submit', async event => {
-      event.preventDefault(); if (busy) return;
-      errorBox.textContent = ''; setBusy(true);
-      try {
-        const pending = client.auth.signInWithPassword({ email: email.value.trim(), password: password.value });
-        password.value = '';
-        const { data, error } = await pending;
-        if (error) { errorBox.textContent = loginError(error); return; }
-        if (!data?.session?.user?.id) { errorBox.textContent = '로그인 세션을 확인하지 못했습니다. 다시 시도해 주세요.'; return; }
-        renderSession(data.session);
-      } catch (error) { errorBox.textContent = loginError(error); }
-      finally { password.value = ''; setBusy(false); }
-    });
-    logoutButton.addEventListener('click', async () => {
-      if (busy) return;
-      errorBox.textContent = ''; setBusy(true);
-      try {
-        const { error } = await client.auth.signOut({ scope: 'local' });
-        if (error) { errorBox.textContent = '서버의 로그아웃 처리를 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.'; return; }
-        renderSession(null); status.textContent = '로그아웃했습니다.';
-      } catch { errorBox.textContent = '로그아웃 요청에 실패했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.'; }
-      finally { setBusy(false); }
-    });
-    memoForm.addEventListener('submit', async event => {
-      event.preventDefault(); if (memoBusy || !activeSession) return;
-      const version = renderVersion;
-      const id = editingId;
-      const data = { title: memoTitle.value, body: memoBody.value };
-      memoMessage.textContent = ''; setMemoBusy(true);
-      try {
-        await api(id ? `/api/notes/${encodeURIComponent(id)}` : '/api/notes', {
-          method: id ? 'PUT' : 'POST', data, version,
-        });
-        resetEditor();
-        await loadNotes(activeSession, version);
-        if (version === renderVersion) memoMessage.textContent = id ? '메모를 수정했습니다.' : '메모를 추가했습니다.';
-      } catch (error) {
-        if (version === renderVersion && error.name !== 'AbortError') memoMessage.textContent = error.message;
-      } finally { if (version === renderVersion) setMemoBusy(false); }
-    });
-    memoCancel.addEventListener('click', () => { if (!memoBusy) { resetEditor(); memoMessage.textContent = ''; } });
-  } catch {
-    ++renderVersion;
-    for (const controller of requests) controller.abort();
-    requests.clear(); activeSession = null;
-    notes.replaceChildren(); notes.hidden = true; panel.hidden = true;
-    resetEditor(); memoMessage.textContent = '';
-    form.hidden = true; logoutButton.hidden = true;
-    status.textContent = '로그인 기능을 준비하지 못했습니다.';
-    errorBox.textContent = '인증 화면을 불러오지 못했습니다. 새로고침한 뒤 다시 시도해 주세요.';
+  async function authRequest(method, data) {
+    const headers = { 'x-requested-with': 'vault-ui' };
+    if (data !== undefined) headers['Content-Type'] = 'application/json';
+    const response = await fetch('/api/auth', { method, credentials: 'same-origin',
+      cache: 'no-store', headers, body: data === undefined ? undefined : JSON.stringify(data) });
+    let payload;
+    try { payload = await response.json(); } catch { /* Error below contains no upstream data. */ }
+    if (!response.ok || !payload || !Object.hasOwn(payload, 'user')) {
+      const error = new Error('auth_request_failed');
+      error.code = typeof payload?.error === 'string' ? payload.error : 'AUTH_UNAVAILABLE';
+      error.status = response.status;
+      throw error;
+    }
+    if (payload.user === null) return null;
+    if (typeof payload.user?.id !== 'string' || typeof payload.user?.email !== 'string'
+        || !Number.isSafeInteger(payload.expiresAt)) throw new Error('invalid_auth_response');
+    return { user: { id: payload.user.id, email: payload.user.email }, expiresAt: payload.expiresAt };
   }
+  function scheduleSession(session) {
+    clearTimeout(refreshTimer);
+    if (!session?.user || loggingOut) return;
+    const delay = Math.max(1000, Math.min(20 * 60 * 1000, session.expiresAt * 1000 - Date.now() - 60000));
+    refreshTimer = setTimeout(() => { void restoreSession(true).catch(() => {}); }, delay);
+    refreshTimer?.unref?.();
+  }
+  function restoreSession(background = false) {
+    if (restorePromise) return restorePromise;
+    const version = renderVersion;
+    restorePromise = (async () => {
+      const session = await authRequest('GET');
+      if (loggingOut || version !== renderVersion) return null;
+      if (!background || session?.user?.id !== activeSession?.user?.id) renderSession(session);
+      else { activeSession = session; scheduleSession(session); }
+      return session;
+    })().finally(() => { restorePromise = null; });
+    return restorePromise;
+  }
+  ownerCheck.addEventListener('click', checkOwnerRead);
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); if (busy) return;
+    errorBox.textContent = ''; setBusy(true);
+    try {
+      const pending = authRequest('POST', { email: email.value.trim(), password: password.value });
+      password.value = '';
+      const session = await pending;
+      if (!session?.user) throw new Error('missing_auth_session');
+      renderSession(session);
+    } catch (error) { errorBox.textContent = loginError(error); }
+    finally { password.value = ''; setBusy(false); }
+  });
+  logoutButton.addEventListener('click', async () => {
+    if (busy) return;
+    errorBox.textContent = ''; setBusy(true); loggingOut = true;
+    clearTimeout(refreshTimer);
+    try {
+      // Let an in-flight refresh finish before logout clears/revokes its cookies.
+      if (restorePromise) await restorePromise.catch(() => {});
+      await authRequest('DELETE');
+      renderSession(null); status.textContent = '로그아웃했습니다.';
+    } catch {
+      errorBox.textContent = '서버의 로그아웃 처리를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+    } finally { loggingOut = false; scheduleSession(activeSession); setBusy(false); }
+  });
+  memoForm.addEventListener('submit', async event => {
+    event.preventDefault(); if (memoBusy || !activeSession) return;
+    const version = renderVersion;
+    const id = editingId;
+    const data = { title: memoTitle.value, body: memoBody.value };
+    memoMessage.textContent = ''; setMemoBusy(true);
+    try {
+      await api(id ? `/api/notes/${encodeURIComponent(id)}` : '/api/notes', {
+        method: id ? 'PUT' : 'POST', data, version,
+      });
+      resetEditor();
+      await loadNotes(activeSession, version);
+      if (version === renderVersion) memoMessage.textContent = id ? '메모를 수정했습니다.' : '메모를 추가했습니다.';
+    } catch (error) {
+      if (version === renderVersion && error.name !== 'AbortError') memoMessage.textContent = error.message;
+    } finally { if (version === renderVersion) setMemoBusy(false); }
+  });
+  memoCancel.addEventListener('click', () => { if (!memoBusy) { resetEditor(); memoMessage.textContent = ''; } });
+  setBusy(true);
+  void restoreSession().catch(() => {
+    renderSession(null);
+    errorBox.textContent = '로그인 상태를 확인하지 못했습니다. 잠시 후 다시 로그인해 주세요.';
+  }).finally(() => { setBusy(false); });
 })();

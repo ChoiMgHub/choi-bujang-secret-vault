@@ -1,7 +1,7 @@
 import { checkStep3 } from './step3-checks.mjs';
+import { SUPABASE_PUBLIC_KEY as PUBLIC_KEY } from './supabase-public.mjs';
 
 // Public browser key only. No student token/password or server secret is used.
-const PUBLIC_KEY = 'sb_publishable_z3tY48lOSOJ8NqLhTpuTXg_aNgHDGKd';
 
 export async function checkStep4(config, { fetchImpl = globalThis.fetch } = {}) {
   const checks = await checkStep3(config, { fetchImpl, expectedStep: 4 });

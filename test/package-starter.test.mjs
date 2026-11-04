@@ -13,7 +13,7 @@ test('시작 틀의 API 기준표는 보존하고 자료실 CRUD 경로를 추�
   assert.equal(baseline.starter, 'ChoiTimo/aleph-defense-starter');
   assert.deepEqual(baseline.functions, []);
   assert.deepEqual(baseline.allowedNew, ['api/ai.js', 'api/threat-intel.js']);
-  assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew, 'api/notes.js'].sort());
+  assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew, 'api/notes.js', 'api/auth.js'].sort());
   const dynamic = await readFile(new URL('../api/notes/[id].js', import.meta.url), 'utf8');
   assert.match(dynamic, /export \{ default \} from '\.\.\/notes\.js'/u);
 });
