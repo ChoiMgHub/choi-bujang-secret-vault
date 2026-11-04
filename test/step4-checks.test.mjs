@@ -5,6 +5,8 @@ import { checkStep4 } from '../src/step4-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
 
 const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+// Keep this suite about the historical stage 4 deployment contract.
+config.step = 4;
 const publicSource = await readFile(new URL('../public/auth-ui.js', import.meta.url), 'utf8');
 const commit = 'a'.repeat(40);
 function remote({ direct = 'denied', step = 4 } = {}) {
