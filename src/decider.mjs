@@ -1,7 +1,8 @@
 import { inspectConnection } from './decider-input.mjs';
+import { permitsResource } from './resource-policy.mjs';
 
 // Requests reach this function only after the engine's identity/device/route checks.
-export const RULE_IDS = Object.freeze(['device_registered', 'step_up_required']);
+export const RULE_IDS = Object.freeze(['device_registered', 'step_up_required', 'resource_zone']);
 
 // Local fixture policy, not a measured baseline of the real user.
 const EARLY_HOUR_END = 6;
@@ -23,11 +24,15 @@ export async function decide(request) {
     return response(request, 'deny', 'device_not_registered', ['device_registered']);
   }
 
+  if (!permitsResource(request)) {
+    return response(request, 'deny', 'resource_not_allowed', ['device_registered', 'resource_zone']);
+  }
+
   const connection = inspectConnection(request);
   if (connection.kind === 'unavailable') {
     // Live signals are explicitly unavailable in the supplied contract.
     // Keep stage 6 behavior; this is not a successful stage 7 risk assessment.
-    return response(request, 'allow', 'approved', ['device_registered']);
+    return response(request, 'allow', 'approved', ['device_registered', 'resource_zone']);
   }
   if (connection.kind === 'invalid') {
     return response(request, 'step_up', 'step_up_required', [...RULE_IDS]);
