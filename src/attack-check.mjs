@@ -5,10 +5,10 @@ import { checkStep3 } from './step3-checks.mjs';
 import { checkStep4 } from './step4-checks.mjs';
 import { checkStep5 } from './step5-checks.mjs';
 export async function runAttackChecks(config) {
-  if (config.step === 5) {
-    const checks = await checkStep5(config);
+  if (config.step === 5 || config.step === 6) {
+    const checks = await checkStep5(config, { expectedStep: config.step });
     const failed = checks.find(check => !check.passed);
-    if (failed) throw new Error(`5단계 점검 실패: ${failed.attackId} (${failed.observed})`);
+    if (failed) throw new Error(`${config.step}단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 4) {

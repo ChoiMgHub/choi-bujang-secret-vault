@@ -3,7 +3,7 @@ import { SUPABASE_PUBLIC_KEY as PUBLIC_KEY } from './supabase-public.mjs';
 
 // Public application key only: no password, user JWT or server secret is used.
 
-export async function checkStep5(config, { fetchImpl = globalThis.fetch } = {}) {
+export async function checkStep5(config, { fetchImpl = globalThis.fetch, expectedStep = 5 } = {}) {
   const issuer = new URL(config.identityProvider.issuer);
   const source = new URL(config.originalApiUrl);
   if (issuer.protocol !== 'https:' || !/^[a-z0-9-]+\.supabase\.co$/u.test(issuer.hostname)
@@ -13,7 +13,7 @@ export async function checkStep5(config, { fetchImpl = globalThis.fetch } = {}) 
       || source.username || source.password || source.port || source.search || source.hash) {
     throw new Error('originalApiUrl은 같은 Supabase 프로젝트 메모 테이블의 쿼리 없는 HTTPS 주소여야 합니다.');
   }
-  const checks = await checkStep3(config, { fetchImpl, expectedStep: 5 });
+  const checks = await checkStep3(config, { fetchImpl, expectedStep });
   const target = new URL(source);
   target.search = '?select=id&limit=1';
   const response = await fetchImpl(target, {

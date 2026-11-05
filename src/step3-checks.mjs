@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 // Submission self-check only: never a replacement for src/verify-login.mjs.
 // These requests verify anonymous denial and deployment metadata, not signed-in CRUD.
 export async function checkStep3(config, { fetchImpl = globalThis.fetch, expectedStep = 3 } = {}) {
-  if (![3, 4, 5].includes(expectedStep)) throw new Error('지원하는 로그인 점검 단계는 3~5입니다.');
+  if (![3, 4, 5, 6].includes(expectedStep)) throw new Error('지원하는 로그인 점검 단계는 3~6입니다.');
   const app = new URL(config.publicAppUrl);
   if (app.protocol !== 'https:' || app.username || app.password || app.search || app.hash || app.pathname !== '/') {
     throw new Error('실제 HTTPS 배포 주소를 확인하세요.');

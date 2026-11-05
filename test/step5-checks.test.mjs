@@ -5,6 +5,7 @@ import { checkStep5 } from '../src/step5-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
 
 const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+config.step = 5;
 const source = await readFile(new URL('../src/supabase-public.mjs', import.meta.url), 'utf8');
 const commit = 'a'.repeat(40);
 const originalUrl = new URL(config.originalApiUrl);
