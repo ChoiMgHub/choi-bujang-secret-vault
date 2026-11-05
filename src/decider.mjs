@@ -1,17 +1,50 @@
-// ALEPH SDP 엔진이 확인한 요청만 받는 학생 판정기 시작점입니다.
-// 6단계: 등록 기기의 정상 요청을 허용하고 미등록·등록 값 누락은 거부합니다.
-// 요청 본문의 userId, role, 기기 키, 토큰을 별도로 믿거나 저장하지 마세요.
-// 운영 엔진이 확인해서 전달한 요청을 판단합니다.
-export const RULE_IDS = Object.freeze(['device_registered']);
+import { inspectConnection } from './decider-input.mjs';
+
+// Requests reach this function only after the engine's identity/device/route checks.
+export const RULE_IDS = Object.freeze(['device_registered', 'step_up_required']);
+
+// Local fixture policy, not a measured baseline of the real user.
+const EARLY_HOUR_END = 6;
+const SIGNAL_MAX_AGE_SECONDS = 60;
+const BURST_LIMIT = 20;
+const FIXTURE_RECHECK_MAX_AGE_SECONDS = 60;
+
+const response = (request, decision, reasonCode, ruleIds) => ({
+  schema: 'aleph.decision.v1',
+  requestId: request?.requestId,
+  decision,
+  reasonCode,
+  ruleIds,
+});
 
 export async function decide(request) {
-  const registered = request.deviceRegistered === true;
+  // A fixture recheck must never override the stage 6 device rule.
+  if (request?.deviceRegistered !== true) {
+    return response(request, 'deny', 'device_not_registered', ['device_registered']);
+  }
 
-  return {
-    schema: 'aleph.decision.v1',
-    requestId: request.requestId,
-    decision: registered ? 'allow' : 'deny',
-    reasonCode: registered ? 'approved' : 'device_not_registered',
-    ruleIds: ['device_registered'],
-  };
+  const connection = inspectConnection(request);
+  if (connection.kind === 'unavailable') {
+    // Live signals are explicitly unavailable in the supplied contract.
+    // Keep stage 6 behavior; this is not a successful stage 7 risk assessment.
+    return response(request, 'allow', 'approved', ['device_registered']);
+  }
+  if (connection.kind === 'invalid') {
+    return response(request, 'step_up', 'step_up_required', [...RULE_IDS]);
+  }
+
+  const earlyHour = connection.signals.hour < EARLY_HOUR_END;
+  const unfamiliarNetwork = connection.signals.network === 'unusual';
+  const recentBurst = connection.recentEvents.some(event => event.kind === 'risk_signal'
+    && event.ageSeconds <= SIGNAL_MAX_AGE_SECONDS && event.count >= BURST_LIMIT);
+  const compound = earlyHour && unfamiliarNetwork && recentBurst;
+
+  // verified + age is a simulated recheck only on judge_fixture input.
+  // No live challenge, fresh-login binding or data relay is implemented here.
+  const fixtureRechecked = connection.stepUp.verified
+    && connection.stepUp.authAgeSeconds <= FIXTURE_RECHECK_MAX_AGE_SECONDS;
+  if (compound && !fixtureRechecked) {
+    return response(request, 'step_up', 'step_up_required', [...RULE_IDS]);
+  }
+  return response(request, 'allow', 'approved', [...RULE_IDS]);
 }

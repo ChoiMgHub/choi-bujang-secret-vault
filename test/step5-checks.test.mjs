@@ -102,3 +102,23 @@ test('stage 5 bundle uses redacted observations and refuses a failed original-AP
     await assert.rejects(runAttackChecks(config), /original_api_public_key/u);
   } finally { globalThis.fetch = original; }
 });
+
+test('stages 6 and 7 keep all sixteen checks, exact deployment identity and original-API denial', async () => {
+  const original = globalThis.fetch;
+  try {
+    for (const step of [6, 7]) {
+      const current = { ...config, step, expectedCommit: commit };
+      globalThis.fetch = remote({ step });
+      const attempts = await runAttackChecks(current);
+      assert.equal(attempts.length, 16);
+      assert.ok(attempts.every(item => Object.keys(item).sort().join(',') === 'attackId,expected,observed'));
+      assert.ok(!JSON.stringify(attempts).includes('fixture diagnostic'));
+      assert.ok(!JSON.stringify(attempts).includes('sb_publishable_'));
+      for (const opts of [{ step: step - 1 }, { step, sha: 'b'.repeat(40) },
+        { step, direct: 'allowed' }]) {
+        globalThis.fetch = remote(opts);
+        await assert.rejects(runAttackChecks(current), /deployment_identity|original_api_public_key/u);
+      }
+    }
+  } finally { globalThis.fetch = original; }
+});
