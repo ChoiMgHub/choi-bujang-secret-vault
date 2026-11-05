@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import deploymentConfig from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
 import { cookieAuthorization, trustedBrowserRequest, usesCookieAuthorization } from '../src/browser-session.mjs';
+import { identifyResourcePath } from '../src/resource-zones.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 // owner_id is checked internally and never included in the public note response.
@@ -37,6 +38,11 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
   return async function handler(request, response) {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
+    let resource;
+    try {
+      resource = identifyResourcePath(new URL(request.url || '/api/notes', 'https://app.invalid').pathname);
+    } catch { /* Malformed paths never become an authorization grant. */ }
+    response.setHeader('X-Resource-Zone', resource?.zoneId ?? 'unknown');
     const authorization = cookieAuthorization(request);
     if (typeof authorization !== 'string' || !authorization) {
       return response.status(401).json({ error: 'AUTH_REQUIRED' });

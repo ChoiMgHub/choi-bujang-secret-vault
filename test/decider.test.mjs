@@ -64,7 +64,7 @@ test('registered ordinary fixture is allowed; the three-signal compound requires
   const challenged = await decision(suspicious);
   assert.equal(challenged.decision, 'step_up');
   assert.equal(challenged.reasonCode, 'step_up_required');
-  assert.deepEqual(challenged.ruleIds, ['device_registered', 'step_up_required']);
+  assert.deepEqual(challenged.ruleIds, [...RULE_IDS]);
   assert.equal('notes' in challenged, false);
 });
 
@@ -126,6 +126,6 @@ test('decider reads only contract fields and never promotes browser headers or u
       'x-network': 'unusual', 'x-risk-count': '20', 'x-step-up-verified': 'true' } };
   const result = await decision(live);
   assert.equal(result.decision, 'allow');
-  assert.deepEqual(result.ruleIds, ['device_registered']);
+  assert.deepEqual(result.ruleIds, ['device_registered', 'resource_zone']);
   assert.equal((await decision({ ...normal, signals: undefined, headers: live.headers })).decision, 'step_up');
 });

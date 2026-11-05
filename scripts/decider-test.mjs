@@ -38,6 +38,20 @@ export async function checkDecider({ decide, ruleIds }) {
       decision: 'allow' },
     );
   }
+  if (ruleIds.includes('resource_zone')) {
+    const item = (service, method, path, route) => ({ ...normal, requestId: randomUUID(),
+      service, method, path, route });
+    checks.push(
+      { name: '메모 전체 목록 경로', request: item('notes', 'GET', '/notes', 'GET /notes'), decision: 'deny', reasonCode: 'resource_not_allowed' },
+      { name: '반 공지 읽기', request: item('notices', 'GET', '/notices/sample', 'GET /notices/:id'), decision: 'allow' },
+      ...['POST', 'PUT', 'PATCH', 'DELETE'].map(method => ({ name: `반 공지 ${method} 거부`,
+        request: item('notices', method, '/notices/sample', `${method} /notices/:id`),
+        decision: 'deny', reasonCode: 'resource_not_allowed' })),
+      { name: '강사 자료 읽기 거부', request: item('instructor', 'GET', '/instructor/sample', 'GET /instructor/:id'), decision: 'deny', reasonCode: 'resource_not_allowed' },
+      { name: '모르는 경로 거부', request: item('notes', 'GET', '/unknown/sample', 'GET /unknown/:id'), decision: 'deny', reasonCode: 'resource_not_allowed' },
+      { name: '메모 ID와 export 경로 혼동 방지', request: item('notes', 'GET', '/notes/export', 'GET /notes/:id'), decision: 'deny', reasonCode: 'resource_not_allowed' },
+    );
+  }
   const results = [];
   for (const item of checks) {
     const response = await decide(item.request);

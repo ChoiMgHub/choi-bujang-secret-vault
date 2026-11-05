@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 const baseline = JSON.parse(await readFile(new URL('../package/baseline-functions.json', import.meta.url)));
 
-test('시작 틀의 API 기준표는 보존하고 자료실 CRUD 경로를 추가한다', async () => {
+test('시작 틀의 API 기준표를 보존하고 메모·공지·강사 자료 경로만 추가한다', async () => {
   const actual = (await readdir(new URL('../api/', import.meta.url)))
     .filter(name => /\.(?:m?js|ts)$/u.test(name))
     .map(name => join('api', name).replaceAll('\\', '/')).sort();
@@ -13,9 +13,18 @@ test('시작 틀의 API 기준표는 보존하고 자료실 CRUD 경로를 추�
   assert.equal(baseline.starter, 'ChoiTimo/aleph-defense-starter');
   assert.deepEqual(baseline.functions, []);
   assert.deepEqual(baseline.allowedNew, ['api/ai.js', 'api/threat-intel.js']);
-  assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew, 'api/notes.js', 'api/auth.js'].sort());
+  assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew,
+    'api/notes.js', 'api/auth.js', 'api/notices.js', 'api/instructor.js'].sort());
   const dynamic = await readFile(new URL('../api/notes/[id].js', import.meta.url), 'utf8');
   assert.match(dynamic, /export \{ default \} from '\.\.\/notes\.js'/u);
+  for (const name of ['notices', 'instructor']) {
+    const resource = await readFile(new URL(`../api/${name}/[id].js`, import.meta.url), 'utf8');
+    assert.ok(resource.includes(`export { default } from '../${name}.js'`));
+  }
+  const management = await readFile(new URL('../api/admin/notices.js', import.meta.url), 'utf8');
+  assert.match(management, /area: 'notices', admin: true/u);
+  const managementItem = await readFile(new URL('../api/admin/notices/[id].js', import.meta.url), 'utf8');
+  assert.ok(managementItem.includes("export { default } from '../notices.js'"));
 });
 
 test('미구현 서버 뼈대는 성공이나 로그인 통과로 가장하지 않는다', async () => {
