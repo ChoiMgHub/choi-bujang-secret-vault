@@ -65,12 +65,17 @@ export function createResourceHandler({ area, admin = false, env = process.env,
       if (!identity || !UUID.test(identity.userId)) return fail(401, 'AUTH_REQUIRED');
       const { db } = runtime;
       const url = new URL(request.url || base, 'https://app.invalid');
-      if (url.search || url.hash) return fail(400, 'QUERY_NOT_ALLOWED');
       const path = url.pathname;
       const suffix = path === base ? '' : path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null;
       if (suffix === null || suffix.includes('/')) return fail(404, 'NOT_FOUND');
       const id = suffix ? suffix.toLowerCase() : null;
       if (id && !UUID.test(id)) return fail(400, 'INVALID_ID');
+      // The deployment router may mirror the dynamic path segment as ?id=.
+      // It cannot select a resource: only the exact single path ID is accepted.
+      const params = [...url.searchParams];
+      const mirroredPathId = id !== null && params.length === 1
+        && params[0][0] === 'id' && params[0][1] === suffix;
+      if (url.hash || (url.search && !mirroredPathId)) return fail(400, 'QUERY_NOT_ALLOWED');
 
       // The public notice path remains read-only even for a verified instructor.
       if (!admin && area === 'notices' && request.method !== 'GET') return fail(403, 'NOTICE_READ_ONLY');

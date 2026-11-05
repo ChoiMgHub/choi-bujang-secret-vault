@@ -85,6 +85,35 @@ test('public notices allow student reads but reject every write, even for an ins
   assert.deepEqual(f.stores.vault_notices, before);
 });
 
+test('a router-mirrored path ID preserves notice reads and instructor permission checks', async () => {
+  const notices = fixture();
+  const read = await call(notices, 'a', 'GET', `/api/notices/${noticeId}?id=${noticeId}`);
+  assert.equal(read.code, 200);
+  assert.equal(read.body.id, noticeId);
+  const instructor = fixture({ area: 'instructor' });
+  const denied = await call(instructor, 'a', 'GET', `/api/instructor/${materialId}?id=${materialId}`);
+  assert.equal(denied.code, 403);
+  assert.deepEqual(denied.body, { error: 'INSTRUCTOR_REQUIRED' });
+  assert.ok(instructor.calls.every(c => c.name === 'vault_resource_roles'));
+});
+
+test('query IDs cannot select or replace path resources, duplicate IDs or choose operations', async () => {
+  const f = fixture();
+  for (const path of [
+    `/api/notices?id=${noticeId}`,
+    `/api/notices/${noticeId}?id=${materialId}`,
+    `/api/notices/${noticeId}?id=${noticeId}&id=${noticeId}`,
+    `/api/notices/${noticeId}?id=${noticeId}&operation=export`,
+    `/api/notices/${noticeId}?operation=export`,
+    `/api/notices/${noticeId}?id=${noticeId}#fragment`,
+  ]) {
+    const res = await call(f, 'a', 'GET', path);
+    assert.equal(res.code, 400);
+    assert.deepEqual(res.body, { error: 'QUERY_NOT_ALLOWED' });
+  }
+  assert.equal(f.calls.length, 0);
+});
+
 test('stored role, not forged body/header identity, gates instructor and notice-management paths', async () => {
   for (const options of [{ area: 'instructor' }, { admin: true }]) {
     const f = fixture(options); const before = structuredClone(f.stores);
