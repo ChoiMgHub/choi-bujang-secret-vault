@@ -3,8 +3,10 @@ import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { fixtureRequests } from '../scripts/fixture-7.mjs';
 import { POLICY_SOURCES, createPolicyCopy, previewPolicyCopy, readDbSnapshot,
-  verifyPolicyCopy, sha256 } from '../src/policy-copy.mjs';
+  restorePolicyCopy, verifyPolicyCopy, sha256 } from '../src/policy-copy.mjs';
 
 const BASE = 'a'.repeat(40);
 function dbFixture() {
@@ -126,4 +128,50 @@ test('unexpected backup or trial files stop preview instead of silently omitting
     await assert.rejects(previewPolicyCopy({ root: options.root, id: result.id,
       expectedHash: result.expectedHash }), /unexpected_backup_files|unexpected_trial_files/u);
   }
+});
+
+test('reviewed trial restore restores the device rule, preserves live files and appends to audit', async t => {
+  const options = await setup(t);
+  const copy = await createPolicyCopy(options);
+  const input = { root: options.root, id: copy.id, expectedHash: copy.expectedHash };
+  const p = paths(options.root, copy.id);
+  const auditBefore = await readFile(join(p.run, 'audit.jsonl'), 'utf8');
+  const liveBefore = await readFile(join(options.root, 'src/decider.mjs'));
+  const configBefore = await readFile(join(options.root, 'aleph.config.json'));
+  const moduleUrl = pathToFileURL(join(p.trial, 'src/decider.mjs')).href;
+  const broken = await import(`${moduleUrl}?phase=before`);
+  const { normal } = fixtureRequests();
+  assert.equal((await broken.decide({ ...normal, deviceRegistered: false })).decision, 'allow');
+  const plan = await previewPolicyCopy(input);
+  const result = await restorePolicyCopy({ ...input, expectedPlanHash: plan.planSha256 });
+  assert.equal(result.restored, true);
+  assert.deepEqual(result.changes, []);
+  assert.deepEqual(await readFile(join(p.trial, 'src/decider.mjs')), liveBefore);
+  assert.deepEqual(await readFile(join(options.root, 'src/decider.mjs')), liveBefore);
+  assert.deepEqual(await readFile(join(options.root, 'aleph.config.json')), configBefore);
+  const auditAfter = await readFile(join(p.run, 'audit.jsonl'), 'utf8');
+  assert.ok(auditAfter.startsWith(auditBefore));
+  assert.equal(JSON.parse(auditAfter.trim().split('\n').at(-1)).action, 'trial_policy_restored');
+  assert.deepEqual((await previewPolicyCopy(input)).changes, []);
+  const restored = await import(`${moduleUrl}?phase=after`);
+  assert.equal((await restored.decide(normal)).decision, 'allow');
+  const denied = await restored.decide({ ...normal, deviceRegistered: false });
+  assert.equal(denied.decision, 'deny');
+  assert.equal(denied.reasonCode, 'device_not_registered');
+});
+
+test('a stale preview and an unrelated trial change cannot be restored or erase audit', async t => {
+  const options = await setup(t);
+  const copy = await createPolicyCopy(options);
+  const input = { root: options.root, id: copy.id, expectedHash: copy.expectedHash };
+  const p = paths(options.root, copy.id);
+  const before = await previewPolicyCopy(input);
+  const audit = await readFile(join(p.run, 'audit.jsonl'));
+  const other = join(p.trial, 'allowedRoutes.json');
+  await writeFile(other, '[]\n');
+  await assert.rejects(restorePolicyCopy({ ...input, expectedPlanHash: before.planSha256 }), /reviewed_policy_plan_mismatch/u);
+  const fresh = await previewPolicyCopy(input);
+  await assert.rejects(restorePolicyCopy({ ...input, expectedPlanHash: fresh.planSha256 }), /unexpected_policy_trial_change/u);
+  assert.equal(await readFile(other, 'utf8'), '[]\n');
+  assert.deepEqual(await readFile(join(p.run, 'audit.jsonl')), audit);
 });

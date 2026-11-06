@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 
 export const POLICY_SOURCES = Object.freeze([
@@ -207,6 +207,41 @@ export async function previewPolicyCopy(options) {
       before: a.slice(first, endA), after: b.slice(first, endB),
       backupSha256: entry.sha256, trialSha256: sha256(after) });
   }
-  return { id: options.id, baseCommit: manifest.baseCommit, manifestSha256: options.expectedHash,
+  const report = { id: options.id, baseCommit: manifest.baseCommit, manifestSha256: options.expectedHash,
     target: 'private_trial_only', changes };
+  return { ...report, planSha256: sha256(JSON.stringify(report)) };
+}
+
+// Restore exactly the one-line trial made by createPolicyCopy, never live paths.
+export async function restorePolicyCopy(options) {
+  const preview = await previewPolicyCopy(options);
+  if (!SHA.test(options.expectedPlanHash) || options.expectedPlanHash !== preview.planSha256) {
+    fail('reviewed_policy_plan_mismatch');
+  }
+  if (preview.changes.length === 0) return { ...preview, restored: false };
+  const [change] = preview.changes;
+  if (preview.changes.length !== 1 || change.path !== 'src/decider.mjs'
+      || change.before.length !== 1 || change.after.length !== 1
+      || change.before[0] !== '  if (request?.deviceRegistered !== true) {'
+      || change.after[0] !== '  if (false) { // STEP10 TRIAL ONLY: device condition bypassed') {
+    fail('unexpected_policy_trial_change');
+  }
+  const run = runPath(options.root, options.id);
+  const bytes = await regular(join(run, 'backup'), change.path);
+  if (sha256(bytes) !== change.backupSha256
+      || sha256(await regular(join(run, 'trial'), change.path)) !== change.trialSha256) {
+    fail('policy_changed_after_review');
+  }
+  // Audit must exist and remain a regular private file before any trial write.
+  await regular(run, 'audit.jsonl');
+  const trial = join(run, 'trial');
+  const temp = `${change.path}.${randomUUID()}.tmp`;
+  await writePrivate(trial, temp, bytes);
+  await rename(join(trial, temp), join(trial, change.path));
+  const after = await previewPolicyCopy(options);
+  if (after.changes.length !== 0) fail('trial_restore_verification_failed');
+  await appendFile(join(run, 'audit.jsonl'), `${JSON.stringify({ at: new Date().toISOString(),
+    action: 'trial_policy_restored', path: change.path, reviewedPlanSha256: preview.planSha256,
+    manifestSha256: options.expectedHash })}\n`);
+  return { ...after, restored: true, restoredPaths: [change.path] };
 }

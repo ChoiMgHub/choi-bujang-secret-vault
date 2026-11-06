@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createPolicyCopy, previewPolicyCopy } from '../src/policy-copy.mjs';
+import { createPolicyCopy, previewPolicyCopy, restorePolicyCopy } from '../src/policy-copy.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const [command, first, second, ...extra] = process.argv.slice(2);
@@ -14,6 +14,9 @@ try {
     process.stdout.write(`차이 확인: node scripts/policy-copy.mjs preview ${result.id} ${result.expectedHash}\n`);
   } else if (command === 'preview' && first && second && !extra.length) {
     result = await previewPolicyCopy({ root, id: first, expectedHash: second });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else if (command === 'restore' && first && second && extra.length === 1) {
+    result = await restorePolicyCopy({ root, id: first, expectedHash: second, expectedPlanHash: extra[0] });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else {
     throw new Error('usage_create_db_export_or_preview_id_hash');
