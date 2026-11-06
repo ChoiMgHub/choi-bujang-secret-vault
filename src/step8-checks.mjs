@@ -1,8 +1,9 @@
 import { checkStep5 } from './step5-checks.mjs';
 import { SUPABASE_PUBLIC_KEY } from './supabase-public.mjs';
 
-export async function checkStep8(config, { fetchImpl = globalThis.fetch } = {}) {
-  const checks = await checkStep5(config, { fetchImpl, expectedStep: 8 });
+export async function checkStep8(config, { fetchImpl = globalThis.fetch, expectedStep = 8 } = {}) {
+  if (![8, 9].includes(expectedStep)) throw new Error('지원하는 구역 점검 단계는 8~9입니다.');
+  const checks = await checkStep5(config, { fetchImpl, expectedStep });
   const app = new URL(config.publicAppUrl);
   for (const [attackId, method, path] of [
     ['anonymous_notice_read', 'GET', '/api/notices/80000000-0000-4000-8000-000000000001'],

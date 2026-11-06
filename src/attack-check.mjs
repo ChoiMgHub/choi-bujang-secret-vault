@@ -6,10 +6,10 @@ import { checkStep4 } from './step4-checks.mjs';
 import { checkStep5 } from './step5-checks.mjs';
 import { checkStep8 } from './step8-checks.mjs';
 export async function runAttackChecks(config) {
-  if (config.step === 8) {
-    const checks = await checkStep8(config);
+  if (config.step === 8 || config.step === 9) {
+    const checks = await checkStep8(config, { expectedStep: config.step });
     const failed = checks.find(check => !check.passed);
-    if (failed) throw new Error(`8단계 점검 실패: ${failed.attackId} (${failed.observed})`);
+    if (failed) throw new Error(`${config.step}단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if ([5, 6, 7].includes(config.step)) {

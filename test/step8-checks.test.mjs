@@ -67,3 +67,15 @@ test('stage 8 submission keeps only redacted observations and refuses failed zon
     await assert.rejects(runAttackChecks({ ...config, step: 8 }), /zone_tables_direct_read/);
   } finally { globalThis.fetch = original; }
 });
+
+test('stage 9 preserves all zone checks, compares deployment step 9 and refuses a stale stage 8 deployment', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = remote({ step: 9 });
+    const attempts = await runAttackChecks({ ...config, step: 9, expectedCommit: commit });
+    assert.equal(attempts.length, 20);
+    assert.ok(attempts.every(item => Object.keys(item).sort().join(',') === 'attackId,expected,observed'));
+    globalThis.fetch = remote({ step: 8 });
+    await assert.rejects(runAttackChecks({ ...config, step: 9, expectedCommit: commit }), /deployment_identity/);
+  } finally { globalThis.fetch = original; }
+});
