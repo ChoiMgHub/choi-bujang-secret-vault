@@ -5,7 +5,14 @@ import { checkStep3 } from './step3-checks.mjs';
 import { checkStep4 } from './step4-checks.mjs';
 import { checkStep5 } from './step5-checks.mjs';
 import { checkStep8 } from './step8-checks.mjs';
+import { checkStep10 } from './step10-checks.mjs';
 export async function runAttackChecks(config) {
+  if (config.step === 10) {
+    const checks = await checkStep10(config);
+    const failed = checks.find(check => !check.passed);
+    if (failed) throw new Error(`10단계 점검 실패: ${failed.attackId} (${failed.observed})`);
+    return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
+  }
   if (config.step === 8 || config.step === 9) {
     const checks = await checkStep8(config, { expectedStep: config.step });
     const failed = checks.find(check => !check.passed);
