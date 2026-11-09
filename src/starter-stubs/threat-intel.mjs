@@ -1,4 +1,5 @@
-// Packaging starter only. Implement server-side authentication, official
+// Packaging starter only. Routed through api/[feature].js without changing its response.
+// Implement server-side authentication, official
 // NVD/CISA retrieval, six-hour caching, and a fetched-at timestamp.
 export default function handler(_request, response) {
   response.setHeader('Cache-Control', 'no-store');

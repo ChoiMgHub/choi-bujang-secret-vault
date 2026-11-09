@@ -1,4 +1,5 @@
-// Packaging starter only. Implement server-side authentication, a per-user
+// Packaging starter only. Routed through api/[feature].js without changing its response.
+// Implement server-side authentication, a per-user
 // daily limit, and a server-held AI key before using this endpoint.
 export default function handler(_request, response) {
   response.setHeader('Cache-Control', 'no-store');
