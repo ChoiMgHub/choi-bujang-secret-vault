@@ -4,6 +4,10 @@ import { permitsResource } from './resource-policy.mjs';
 // Requests reach this function only after the engine's identity/device/route checks.
 export const RULE_IDS = Object.freeze(['device_registered', 'step_up_required', 'resource_zone']);
 
+// Shared registration rule. In the engine this is its verified contract value;
+// in the student API it is the private DB approval result, never a browser flag.
+export const permitsRegisteredDevice = value => value === true;
+
 // Local fixture policy, not a measured baseline of the real user.
 const EARLY_HOUR_END = 6;
 const SIGNAL_MAX_AGE_SECONDS = 60;
@@ -20,7 +24,7 @@ const response = (request, decision, reasonCode, ruleIds) => ({
 
 export async function decide(request) {
   // A fixture recheck must never override the stage 6 device rule.
-  if (request?.deviceRegistered !== true) {
+  if (!permitsRegisteredDevice(request?.deviceRegistered)) {
     return response(request, 'deny', 'device_not_registered', ['device_registered']);
   }
 

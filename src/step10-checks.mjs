@@ -3,9 +3,9 @@ import { SUPABASE_PUBLIC_KEY } from './supabase-public.mjs';
 import { RECOVERY_TARGET } from './recovery-target.mjs';
 
 // Anonymous probes only. Never invoke recovery as an authenticated owner here.
-export async function checkStep10(config, { fetchImpl = globalThis.fetch } = {}) {
+export async function checkStep10(config, { fetchImpl = globalThis.fetch, expectedStep = 10 } = {}) {
   if (config.restoreRoute !== '/api/restore') throw new Error('10단계 복구 경로는 /api/restore여야 합니다.');
-  const original = await checkStep8(config, { fetchImpl, expectedStep: 10 });
+  const original = await checkStep8(config, { fetchImpl, expectedStep });
   // Keep all earlier HTTP requests; combine two read-denial observations so
   // the submission still contains at most twenty items.
   const readIds = ['anonymous_notice_read', 'anonymous_instructor_read'];

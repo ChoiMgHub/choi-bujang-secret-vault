@@ -158,9 +158,12 @@ export async function createPolicyCopy({ root, dbFile, baseCommit }) {
   await writePrivate(run, 'manifest.sha256', `${expectedHash}\n`);
   // Re-read and verify every saved file before creating or mutating the trial.
   await verifyPolicyCopy({ root, id, expectedHash });
-  const marker = 'if (request?.deviceRegistered !== true) {';
+  const markers = ['if (request?.deviceRegistered !== true) {',
+    'if (!permitsRegisteredDevice(request?.deviceRegistered)) {'];
   const original = payload.get('src/decider.mjs').toString('utf8');
-  if (original.split(marker).length !== 2) fail('trial_rule_marker_not_unique');
+  const matches = markers.filter(marker => original.split(marker).length === 2);
+  if (matches.length !== 1) fail('trial_rule_marker_not_unique');
+  const [marker] = matches;
   await directory(join(run, 'trial'));
   for (const [name, bytes] of payload) {
     const contents = name === 'src/decider.mjs'
@@ -222,7 +225,8 @@ export async function restorePolicyCopy(options) {
   const [change] = preview.changes;
   if (preview.changes.length !== 1 || change.path !== 'src/decider.mjs'
       || change.before.length !== 1 || change.after.length !== 1
-      || change.before[0] !== '  if (request?.deviceRegistered !== true) {'
+      || !['  if (request?.deviceRegistered !== true) {',
+        '  if (!permitsRegisteredDevice(request?.deviceRegistered)) {'].includes(change.before[0])
       || change.after[0] !== '  if (false) { // STEP10 TRIAL ONLY: device condition bypassed') {
     fail('unexpected_policy_trial_change');
   }

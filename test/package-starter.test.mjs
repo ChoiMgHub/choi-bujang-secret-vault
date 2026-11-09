@@ -14,7 +14,7 @@ test('시작 틀의 API 기준표를 보존하고 메모·공지·강사 자료�
   assert.deepEqual(baseline.functions, []);
   assert.deepEqual(baseline.allowedNew, ['api/ai.js', 'api/threat-intel.js']);
   assert.deepEqual(actual, [...baseline.functions, ...baseline.allowedNew,
-    'api/notes.js', 'api/auth.js', 'api/notices.js', 'api/instructor.js', 'api/restore.js'].sort());
+    'api/notes.js', 'api/auth.js', 'api/device.js', 'api/notices.js', 'api/instructor.js', 'api/restore.js'].sort());
   const dynamic = await readFile(new URL('../api/notes/[id].js', import.meta.url), 'utf8');
   assert.match(dynamic, /export \{ default \} from '\.\.\/notes\.js'/u);
   for (const name of ['notices', 'instructor']) {

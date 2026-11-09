@@ -17,6 +17,12 @@
   const memoMessage = document.querySelector('#memo-message');
   const ownerCheck = document.querySelector('#owner-check');
   const ownerCheckResult = document.querySelector('#owner-check-result');
+  const devicePanel = document.querySelector('#device-panel');
+  const deviceStatus = document.querySelector('#device-approval-status');
+  const deviceCode = document.querySelector('#device-code');
+  const deviceMessage = document.querySelector('#device-message');
+  const deviceRequest = document.querySelector('#device-request');
+  const deviceCheck = document.querySelector('#device-check');
   let busy = false;
   let memoBusy = false;
   let activeSession = null;
@@ -27,6 +33,63 @@
   let renderVersion = 0;
   const requests = new Set();
   let cardButtons = [];
+  let deviceState = 'unknown';
+  let deviceBusy = false;
+  let deviceTimer;
+
+  function hideProtectedView() {
+    ++renderVersion;
+    for (const controller of requests) controller.abort();
+    requests.clear();
+    panel.hidden = true; notes.hidden = true;
+    notes.replaceChildren(); cardButtons = [];
+    resetEditor(); memoMessage.textContent = ''; ownerCheckResult.textContent = '';
+    setMemoBusy(false);
+  }
+  async function checkDeviceApproval(requestApproval = false) {
+    if (!activeSession || deviceBusy || loggingOut) return;
+    const session = activeSession, version = renderVersion;
+    deviceBusy = true;
+    deviceRequest.disabled = true; deviceCheck.disabled = true;
+    clearTimeout(deviceTimer);
+    try {
+      const response = await fetch('/api/device', { method: requestApproval ? 'POST' : 'GET',
+        credentials: 'same-origin', cache: 'no-store', headers: {
+          'x-requested-with': 'vault-ui', ...(requestApproval ? { 'Content-Type': 'application/json' } : {}),
+        }, ...(requestApproval ? { body: '{}' } : {}) });
+      const data = await response.json();
+      if (version !== renderVersion || session !== activeSession || loggingOut) return;
+      if (!response.ok || data?.schema !== 'aleph.device-status.v1'
+          || !/^[0-9a-f]{16}$/.test(data.deviceId || '')
+          || !['unrequested','pending','approved','revoked','expired'].includes(data.status)) throw new Error('device_unavailable');
+      const previouslyApproved = deviceState === 'approved';
+      deviceState = data.status;
+      deviceCode.textContent = `확인 코드: ${data.deviceId}`;
+      const labels = { unrequested: '승인 요청 전', pending: '승인 대기', approved: '서버 확인 완료', revoked: '승인 철회', expired: '승인 기간 만료' };
+      deviceStatus.textContent = `기기 승인: ${labels[deviceState]}. 앱 설치 여부와 별도로 확인했습니다.`;
+      deviceMessage.textContent = deviceState === 'approved'
+        ? '서버에 등록된 이 로그인 세션에서 자료실을 열 수 있습니다.'
+        : deviceState === 'pending' ? '요청만 등록됐습니다. 관리자가 계정과 확인 코드를 대조해 승인한 뒤 결과를 다시 확인하세요.'
+        : deviceState === 'unrequested' ? '기기 승인 요청을 눌러 주세요. 승인 전에는 자료가 없습니다.'
+        : '이 로그인 세션에서는 자료를 열 수 없습니다. 로그아웃 후 새 로그인에서 승인을 요청하세요.';
+      if (deviceState === 'approved') {
+        panel.hidden = false; notes.hidden = false; setMemoBusy(false);
+        if (!previouslyApproved) void loadNotes(activeSession, renderVersion);
+      } else if (previouslyApproved) hideProtectedView();
+      deviceTimer = setTimeout(() => { void checkDeviceApproval(); }, 30000);
+      deviceTimer?.unref?.();
+    } catch {
+      if (version === renderVersion && session === activeSession && !loggingOut) {
+        deviceState = 'unavailable'; hideProtectedView();
+        deviceStatus.textContent = '기기 승인: 서버 확인 실패. 자료를 표시하지 않습니다.';
+        deviceMessage.textContent = '승인 상태를 확인하지 못했습니다. 서버 연결 후 승인 결과 다시 확인을 눌러 주세요.';
+      }
+    } finally {
+      deviceBusy = false;
+      deviceRequest.disabled = !activeSession || ['pending','approved','revoked','expired'].includes(deviceState);
+      deviceCheck.disabled = !activeSession;
+    }
+  }
 
   function noteMessage(text) {
     const item = document.createElement('li');
@@ -37,7 +100,7 @@
   function setMemoBusy(value) {
     memoBusy = value;
     for (const control of [memoTitle, memoBody, memoSave, memoCancel, ownerCheck, ...cardButtons]) {
-      control.disabled = value || !activeSession;
+      control.disabled = value || !activeSession || deviceState !== 'approved';
     }
   }
   function resetEditor() {
@@ -56,7 +119,7 @@
     return '서버에서 메모를 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
   }
   async function api(path, { method = 'GET', data, session = activeSession, version = renderVersion } = {}) {
-    if (!session?.user?.id || version !== renderVersion) throw staleView();
+    if (!session?.user?.id || deviceState !== 'approved' || version !== renderVersion) throw staleView();
     const controller = new AbortController();
     requests.add(controller);
     try {
@@ -71,7 +134,16 @@
           body: data === undefined ? undefined : JSON.stringify(data), signal: controller.signal });
       }
       if (version !== renderVersion) throw staleView();
-      if (!response.ok) throw new Error(apiError(response.status));
+      if (!response.ok) {
+        if ([403,503].includes(response.status)) {
+          let failure; try { failure = await response.json(); } catch { /* Fixed UI error below. */ }
+          if (['DEVICE_APPROVAL_REQUIRED','DEVICE_CHECK_UNAVAILABLE'].includes(failure?.error)) {
+            deviceState = 'unavailable'; hideProtectedView();
+            deviceStatus.textContent = '기기 승인: 다시 확인이 필요합니다. 자료를 표시하지 않습니다.';
+          }
+        }
+        throw new Error(apiError(response.status));
+      }
       const payload = await response.json();
       if (version !== renderVersion) throw staleView();
       return payload;
@@ -194,19 +266,24 @@
     for (const controller of requests) controller.abort();
     requests.clear();
     clearTimeout(refreshTimer);
+    clearTimeout(deviceTimer);
     activeSession = session;
+    deviceState = 'unknown'; deviceBusy = false;
+    deviceCode.textContent = ''; deviceMessage.textContent = '';
+    deviceStatus.textContent = session?.user ? '기기 승인: 서버에서 확인 중입니다.' : '기기 승인: 로그인 후 서버에서 확인합니다.';
     ownerCheckResult.textContent = '';
     notes.replaceChildren(); cardButtons = [];
     const signedIn = Boolean(session?.user?.id);
-    panel.hidden = !signedIn;
-    notes.hidden = !signedIn;
+    panel.hidden = true;
+    notes.hidden = true;
+    devicePanel.hidden = !signedIn;
     form.hidden = signedIn;
     logoutButton.hidden = !signedIn;
     status.textContent = signedIn ? `로그인 중: ${session.user.email || '인증된 사용자'}` : '로그인하지 않은 상태입니다.';
     password.value = '';
     if (!signedIn || previousUser !== session.user.id) { resetEditor(); memoMessage.textContent = ''; }
     setMemoBusy(false);
-    if (signedIn) { scheduleSession(session); void loadNotes(session, version); }
+    if (signedIn) { scheduleSession(session); void checkDeviceApproval(); }
   }
   function loginError(error) {
     if (error?.code === 'INVALID_CREDENTIALS') return '이메일 또는 비밀번호를 확인해 주세요.';
@@ -253,6 +330,15 @@
     return restorePromise;
   }
   ownerCheck.addEventListener('click', checkOwnerRead);
+  deviceRequest.addEventListener('click', () => checkDeviceApproval(true));
+  deviceCheck.addEventListener('click', () => checkDeviceApproval());
+  window.addEventListener?.('offline', () => {
+    deviceState = 'unavailable'; clearTimeout(deviceTimer); hideProtectedView();
+    deviceStatus.textContent = '기기 승인: 오프라인에서는 확인할 수 없습니다. 자료를 표시하지 않습니다.';
+  });
+  window.addEventListener?.('online', () => { void checkDeviceApproval(); });
+  window.addEventListener?.('pagehide', () => { deviceState = 'unknown'; clearTimeout(deviceTimer); hideProtectedView(); });
+  window.addEventListener?.('pageshow', () => { void checkDeviceApproval(); });
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (busy) return;
     errorBox.textContent = ''; setBusy(true);

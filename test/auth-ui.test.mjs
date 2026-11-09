@@ -9,9 +9,9 @@ const profile = (email = 'learner-a@example.com') => ({ user: {
   id: email.includes('learner-b') ? '20000000-0000-4000-8000-000000000001' : '10000000-0000-4000-8000-000000000001', email,
 }, expiresAt: Math.floor(Date.now() / 1000) + 3600 });
 
-function ui({ initial = null, noteFetch, authFetch } = {}) {
+function ui({ initial = null, noteFetch, authFetch, deviceFetch } = {}) {
   const elements = new Map();
-  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes', 'memo-panel', 'memo-form', 'memo-title', 'memo-body', 'memo-save', 'memo-cancel', 'memo-message', 'owner-check', 'owner-check-result']) {
+  for (const id of ['login-form', 'login-email', 'login-password', 'login-button', 'logout-button', 'auth-status', 'auth-error', 'notes', 'memo-panel', 'memo-form', 'memo-title', 'memo-body', 'memo-save', 'memo-cancel', 'memo-message', 'owner-check', 'owner-check-result', 'device-panel', 'device-approval-status', 'device-code', 'device-message', 'device-request', 'device-check']) {
     elements.set(`#${id}`, { value: '', textContent: '', hidden: id === 'login-form' || id === 'logout-button', disabled: false,
       children: [], append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; }, events: {}, addEventListener(name, handler) { this.events[name] = handler; } });
   }
@@ -24,6 +24,7 @@ function ui({ initial = null, noteFetch, authFetch } = {}) {
     assert.equal(init.cache, 'no-store');
     assert.equal(init.headers['x-requested-with'], 'vault-ui');
     assert.equal(init.headers.Authorization, undefined);
+    if (path === '/api/device') return deviceFetch ? deviceFetch(path, init) : Response.json({ schema: 'aleph.device-status.v1', deviceId: '0123456789abcdef', status: 'approved' });
     if (path !== '/api/auth') return noteFetch ? noteFetch(path, init)
       : Response.json([{ id: '10000000-0000-4000-8000-000000000001', title: '<img src=x onerror=alert(1)>', body: '가상 메모' }]);
     if (authFetch) return authFetch(init, state);
@@ -191,8 +192,34 @@ test('logout clears pending cross-account results and waits for an in-flight ses
     if (init.method === 'GET') { gets++; if (gets > 1) return new Promise(resolve => { finishRefresh = resolve; }); return Response.json(profile()); }
     order.push('logout'); return Response.json({ user: null });
   }, noteFetch: async () => Response.json([]) });
-  await refreshView.ready(); refreshView.timers.at(-1).callback(); await refreshView.ready();
+  await refreshView.ready(); refreshView.timers[0].callback(); await refreshView.ready();
   const logout = refreshView.logout(); await tick(); assert.equal(order.length, 0);
   finishRefresh(Response.json(profile())); await logout;
   assert.deepEqual(order, ['logout']); assert.equal(refreshView.get('memo-panel').hidden, true);
+});
+
+
+test('stage 11 hides protected views until server approval; request stays pending and a later revocation clears data',async()=>{
+  let status='unrequested';let reads=0;
+  const view=ui({initial:profile(),deviceFetch:async(_path,init)=>{
+    if(init.method==='POST')status='pending';
+    return Response.json({schema:'aleph.device-status.v1',deviceId:'0123456789abcdef',status});
+  },noteFetch:async()=>{reads++;return Response.json([{id:'1',title:'virtual private memo',body:'practice'}]);}});
+  await view.ready();assert.equal(reads,0);assert.equal(view.get('notes').hidden,true);assert.equal(view.get('memo-panel').hidden,true);
+  await view.get('device-request').events.click();await view.ready();
+  assert.equal(status,'pending');assert.equal(reads,0);assert.equal(view.get('notes').children.length,0);
+  assert.match(view.get('device-approval-status').textContent,/승인 대기/u);
+  status='approved';await view.get('device-check').events.click();await view.ready();
+  assert.equal(reads,1);assert.equal(view.get('memo-panel').hidden,false);assert.equal(view.get('notes').children[0].children[0].textContent,'virtual private memo');
+  status='revoked';await view.get('device-check').events.click();await view.ready();
+  assert.equal(view.get('notes').hidden,true);assert.equal(view.get('notes').children.length,0);assert.equal(reads,1);
+  assert.equal(view.get('memo-title').value,'');
+});
+
+test('stage 11 failed approval lookup and late approval response after logout never expose a memo',async()=>{
+  const failed=ui({initial:profile(),deviceFetch:async()=>Response.json({error:'DEVICE_CHECK_UNAVAILABLE'},{status:503})});
+  await failed.ready();assert.equal(failed.get('notes').hidden,true);assert.equal(failed.calls.some(c=>c.path==='/api/notes'),false);
+  let release;const delayed=ui({initial:profile(),deviceFetch:()=>new Promise(resolve=>{release=resolve;})});
+  await delayed.ready();await delayed.logout();release(Response.json({schema:'aleph.device-status.v1',deviceId:'0123456789abcdef',status:'approved'}));
+  await delayed.ready();assert.equal(delayed.get('notes').hidden,true);assert.equal(delayed.calls.some(c=>c.path==='/api/notes'),false);
 });

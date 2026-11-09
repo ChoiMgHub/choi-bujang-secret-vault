@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createNotesHandler } from '../api/notes.js';
+import { sessionDeviceId } from '../src/device-approval.mjs';
 import { ACCESS_COOKIE } from '../src/browser-session.mjs';
 import { generateKeyPair, exportJWK, SignJWT, createLocalJWKSet } from 'jose';
 
@@ -29,11 +30,16 @@ function response() { return { code: 0, headers: {}, body: null,
   setHeader(name, value) { this.headers[name.toLowerCase()] = value; },
   status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } }; }
 function fixture({ envOverride = env, upstreamError = false, malformed = false,
-  unexpectedOwner = false, transferBeforeWrite } = {}) {
+  unexpectedOwner = false, transferBeforeWrite, step = 10, deviceStatus = 'approved' } = {}) {
   let recordCalls = 0; const targets = []; const records = new Map(rows.map(row => [row.id, { ...row }]));
-  const handler = createNotesHandler({ env: envOverride, judgeKeySet, fetchImpl: async (url, init) => {
+  const handler = createNotesHandler({ config: { ...config, step }, env: envOverride, judgeKeySet, fetchImpl: async (url, init) => {
     const target = new URL(url); targets.push(target.pathname);
     if (target.pathname.endsWith('/.well-known/jwks.json')) return Response.json({ keys: [jwk] });
+    if (target.pathname === '/rest/v1/rpc/aleph_step11_device_status') {
+      const args=JSON.parse(init.body);
+      return Response.json({schema:'aleph.device-status.v1',status:deviceStatus,
+        deviceId:sessionDeviceId({kind:'student',userId:args.p_user_id,sessionId:args.p_session_id})});
+    }
     recordCalls++;
     assert.equal(target.origin, env.SUPABASE_URL);
     assert.equal(target.pathname, '/rest/v1/vault_notes');
@@ -268,4 +274,19 @@ test('configuration and DB failures never echo server keys or upstream diagnosti
     const f = fixture(options); const res = await call(f, auth);
     assert.equal(res.code, 502); assert.deepEqual(res.body, { error: 'NOTES_UNAVAILABLE' });
   }
+});
+
+
+test('stage 11 signed student requests cannot skip device approval using bearer tokens or spoofed device headers', async()=>{
+  const sid='60000000-0000-4000-8000-000000000001';
+  const auth=`Bearer ${await token({session_id:sid})}`;
+  for(const status of ['unrequested','pending','revoked','expired']){
+    const f=fixture({step:11,deviceStatus:status});
+    const r=await call(f,auth,'GET',`/api/notes/${rows[0].id}`,undefined,{'x-device-approved':'true','x-role':'instructor'});
+    assert.equal(r.code,403);assert.deepEqual(r.body,{error:'DEVICE_APPROVAL_REQUIRED'});assert.equal(f.recordCalls,0);
+  }
+  const f=fixture({step:11});
+  assert.equal((await call(f,auth,'GET',`/api/notes/${rows[0].id}`)).code,200);
+  assert.equal((await call(f,auth,'GET',`/api/notes/${rows[2].id}`)).code,404);
+  assert.equal((await call(f,`Bearer ${await token()}`,'GET','/api/notes')).code,503);
 });

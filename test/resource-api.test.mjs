@@ -9,7 +9,7 @@ const teacher = '10000000-0000-4000-8000-000000000003';
 const noticeId = '80000000-0000-4000-8000-000000000001';
 const materialId = '80000000-0000-4000-8000-000000000002';
 const otherMaterialId = '80000000-0000-4000-8000-000000000003';
-const config = { publicAppUrl: 'https://fixture.example/' };
+const config = { step: 10, publicAppUrl: 'https://fixture.example/' };
 
 function fixture({ area = 'notices', admin = false, failTable, foreignRows = false } = {}) {
   const stores = {

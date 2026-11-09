@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { checkStep10 } from '../src/step10-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
 
-const config = JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8'));
+const config = { ...JSON.parse(await readFile(new URL('../aleph.config.json', import.meta.url), 'utf8')), step: 10 };
 const commit = 'a'.repeat(40);
 function remote({ step = 10, sha = commit, app = 'denied', rpc = 'denied', zone = 'denied' } = {}) {
   const calls = [];

@@ -41,8 +41,16 @@
     <section class="app-info" aria-label="앱과 기기 확인 상태">
       <p id="app-install-status" role="status">웹 화면으로 이용 중입니다.</p>
       <button id="app-install" type="button" hidden>앱으로 설치</button>
-      <p id="device-approval-status" role="status">기기 승인: 서버 확인 기능을 준비 중입니다. 설치 여부는 기기 승인 근거가 아닙니다.</p>
+      <p id="device-approval-status" role="status">기기 승인: 로그인 후 서버에서 확인합니다. 설치 여부는 기기 승인 근거가 아닙니다.</p>
       <p id="connection-status" role="status">보호 자료를 읽으려면 서버 연결이 필요합니다.</p>
+    </section>
+    <section id="device-panel" class="auth-panel" hidden aria-labelledby="device-heading">
+      <h2 id="device-heading">이 브라우저의 기기 승인</h2>
+      <p>승인 전에는 메모를 불러오지 않습니다. 아래 버튼은 승인 요청만 보냅니다.</p>
+      <p id="device-code"></p>
+      <button id="device-request" type="button">기기 승인 요청</button>
+      <button id="device-check" type="button">승인 결과 다시 확인</button>
+      <p id="device-message" role="status"></p>
     </section>
     <div class="notice">로그인한 계정 소유의 메모만 조회·수정·삭제할 수 있습니다. 실제 개인정보는 입력하지 마세요.</div>
     <section class="auth-panel" aria-labelledby="auth-heading">

@@ -8,7 +8,7 @@ const b = '10000000-0000-4000-8000-000000000002';
 const id = '80000000-0000-4000-8000-000000000010';
 const other = '80000000-0000-4000-8000-000000000011';
 const target = { noteId: id, contentSha256: 'a'.repeat(64) };
-const config = { publicAppUrl: 'https://fixture.example/' };
+const config = { step: 10, publicAppUrl: 'https://fixture.example/' };
 const success = () => ({ schema: 'aleph.note-restore.v1', id, restored: true, idMatches: true,
   ownerMatches: true, contentHashMatches: true, contentSha256: target.contentSha256,
   otherNotesUnchanged: true, auditRowsBefore: 1, auditRowsAfter: 2 });

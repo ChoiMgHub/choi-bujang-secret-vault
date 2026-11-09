@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createLoginVerifier } from './verify-login.mjs';
 import { cookieAuthorization, trustedBrowserRequest, usesCookieAuthorization } from './browser-session.mjs';
 import { RECOVERY_TARGET } from './recovery-target.mjs';
+import { enforceDeviceApproval } from './device-approval.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu;
 const RESULT_KEYS = ['schema', 'id', 'restored', 'idMatches', 'ownerMatches',
@@ -49,6 +50,7 @@ export function createRestoreHandler({ config, target = RECOVERY_TARGET,
       }
       const identity = await runtime.verifyLogin(authorization);
       if (!identity || !UUID.test(identity.userId || '')) return deny(401, 'AUTH_REQUIRED');
+      if (!await enforceDeviceApproval({ db: runtime.db, identity, config, authorization }, response)) return;
       if (request.method !== 'POST') {
         response.setHeader('Allow', 'POST');
         return deny(405, 'METHOD_NOT_ALLOWED');

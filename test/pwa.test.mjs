@@ -37,7 +37,7 @@ test('PWA manifest has actual install icons, and installation never claims devic
   }
   const html = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   assert.match(html, /rel="manifest" href="\/app.webmanifest"/u);
-  assert.match(html, /서버 확인 기능을 준비 중/u);
+  assert.match(html, /로그인 후 서버에서 확인/u);
   assert.match(html, /설치 여부는 기기 승인 근거가 아닙니다/u);
 });
 

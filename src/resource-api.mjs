@@ -4,6 +4,7 @@ import deploymentConfig from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from './verify-login.mjs';
 import { cookieAuthorization, trustedBrowserRequest, usesCookieAuthorization } from './browser-session.mjs';
 import { RESOURCE_ZONES } from './resource-zones.mjs';
+import { enforceDeviceApproval } from './device-approval.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const timed = query => query.abortSignal(AbortSignal.timeout(10000));
@@ -64,6 +65,7 @@ export function createResourceHandler({ area, admin = false, env = process.env,
       const identity = await runtime.verifyLogin(authorization);
       if (!identity || !UUID.test(identity.userId)) return fail(401, 'AUTH_REQUIRED');
       const { db } = runtime;
+      if (!await enforceDeviceApproval({ db, identity, config, authorization }, response)) return;
       const url = new URL(request.url || base, 'https://app.invalid');
       const path = url.pathname;
       const suffix = path === base ? '' : path.startsWith(`${base}/`) ? path.slice(base.length + 1) : null;

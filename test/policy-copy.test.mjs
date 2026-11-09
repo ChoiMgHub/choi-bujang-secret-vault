@@ -71,7 +71,7 @@ test('create re-reads the backup, mutates just one private trial line and preser
   assert.equal(diff.changes[0].path, 'src/decider.mjs');
   assert.equal(diff.changes[0].before.length, 1);
   assert.equal(diff.changes[0].after.length, 1);
-  assert.match(diff.changes[0].before[0], /deviceRegistered !== true/u);
+  assert.match(diff.changes[0].before[0], /if \(!permitsRegisteredDevice\(request\?\.deviceRegistered\)\)/u);
   assert.match(diff.changes[0].after[0], /if \(false\)/u);
   assert.deepEqual(await readFile(join(options.root, 'src/decider.mjs')), source);
   assert.deepEqual(await readFile(join(options.root, 'aleph.config.json')), config);
@@ -80,6 +80,20 @@ test('create re-reads the backup, mutates just one private trial line and preser
   const audit = await readFile(join(p.run, 'audit.jsonl'), 'utf8');
   await previewPolicyCopy(input);
   assert.equal(await readFile(join(p.run, 'audit.jsonl'), 'utf8'), audit);
+});
+
+test('stage 10 original registration marker remains restorable alongside the stage 11 shared rule', async t => {
+  const options = await setup(t);
+  const file = join(options.root, 'src/decider.mjs');
+  const source = (await readFile(file, 'utf8')).replace(
+    'if (!permitsRegisteredDevice(request?.deviceRegistered)) {', 'if (request?.deviceRegistered !== true) {');
+  await writeFile(file, source);
+  const saved = await createPolicyCopy(options);
+  const input = { root: options.root, id: saved.id, expectedHash: saved.expectedHash };
+  const preview = await previewPolicyCopy(input);
+  const restored = await restorePolicyCopy({ ...input, expectedPlanHash: preview.planSha256 });
+  assert.equal(restored.restored, true);
+  assert.deepEqual(await readFile(join(paths(options.root, saved.id).trial, 'src/decider.mjs'), 'utf8'), source);
 });
 
 test('missing or corrupted backup stops before preview and never rewrites trial or audit', async t => {

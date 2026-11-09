@@ -4,6 +4,7 @@ import deploymentConfig from '../aleph.config.json' with { type: 'json' };
 import { createLoginVerifier } from '../src/verify-login.mjs';
 import { cookieAuthorization, trustedBrowserRequest, usesCookieAuthorization } from '../src/browser-session.mjs';
 import { identifyResourcePath } from '../src/resource-zones.mjs';
+import { enforceDeviceApproval } from '../src/device-approval.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 // owner_id is checked internally and never included in the public note response.
@@ -76,6 +77,7 @@ export function createNotesHandler({ env = process.env, fetchImpl = globalThis.f
       const identity = await runtime.verifyLogin(authorization);
       if (!identity) return response.status(401).json({ error: 'AUTH_REQUIRED' });
       const { db } = runtime;
+      if (!await enforceDeviceApproval({ db, identity, config, authorization }, response)) return;
       const path = new URL(request.url || '/api/notes', 'https://app.invalid').pathname;
       const match = /^\/api\/notes(?:\/([^/]+))?\/?$/u.exec(path);
       if (!match) return response.status(404).json({ error: 'NOT_FOUND' });
