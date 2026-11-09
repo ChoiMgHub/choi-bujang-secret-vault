@@ -33,3 +33,15 @@ test('missing deployment, leaked device identity and permissive approval RPC nev
     const checks=await checkStep11(config,fixture(options));assert.ok(checks.some(c=>!c.passed));
   }
 });
+
+test('stage 11 invokes the full earlier HTTP checker chain without a mocked prior checker',async()=>{
+  const paths=[];
+  const fetchImpl=async target=>{
+    paths.push(new URL(target).pathname);
+    return new Response('missing',{status:404});
+  };
+  const checks=await checkStep11({...config,expectedCommit:'a'.repeat(40)},{fetchImpl});
+  assert.equal(checks.length,9);assert.ok(checks.some(c=>!c.passed));
+  assert.ok(paths.includes('/api/auth'));assert.ok(paths.includes('/api/restore'));
+  assert.ok(paths.includes('/rest/v1/rpc/aleph_step10_restore_note'));
+});
