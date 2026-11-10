@@ -68,6 +68,15 @@ test('operations cannot select a different account, source, result or path throu
   assert.equal((await call(f.handler,{headers:{origin:'https://other.example'}})).code,403);
   assert.equal(f.state.calls.length,0);
 });
+test('router-mirrored feature preserves the exact operation path but cannot choose a user or duplicate selectors',async()=>{
+  const f=fixture();
+  assert.equal((await call(f.handler,{url:'/api/operations?feature=operations'})).code,200);
+  assert.equal((await call(f.handler,{url:'/api/operations?feature=operations',headers:{cookie:undefined}})).code,401);
+  for(const url of ['/api/operations?feature=ai','/api/operations?feature=operations&passed=41',
+    '/api/operations?feature=operations&feature=operations','/api/operations?feature=operations&userId=other']) {
+    assert.equal((await call(f.handler,{url})).code,400);
+  }
+});
 test('missing SQL, unexpected fields, fabricated official passes and invalid backups are not displayed as successful records',async()=>{
   const f=fixture();f.state.error={message:'private diagnostic with secret'};
   assert.deepEqual((await call(f.handler)).body,{error:'OPERATIONS_RECORD_UNAVAILABLE'});

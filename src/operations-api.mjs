@@ -57,7 +57,13 @@ export function createOperationsHandler({ deploymentConfig = config, env = proce
     let url;
     try { url = new URL(request.url || '/api/operations','https://app.invalid'); }
     catch { return fail(400,'INVALID_OPERATIONS_PATH'); }
-    if (url.pathname !== '/api/operations' || url.search || url.hash) return fail(400,'INVALID_OPERATIONS_PATH');
+    // Vercel can mirror the exact [feature] segment into the query, just as
+    // existing item APIs receive their matching [id]. It never selects a user
+    // or an operation, and additional/duplicate selectors remain invalid.
+    const params = [...url.searchParams];
+    const mirroredFeature = params.length === 1
+      && params[0][0] === 'feature' && params[0][1] === 'operations';
+    if (url.pathname !== '/api/operations' || (url.search && !mirroredFeature) || url.hash) return fail(400,'INVALID_OPERATIONS_PATH');
     if (!trustedBrowserRequest(request,deploymentConfig)) return fail(403,'ORIGIN_NOT_ALLOWED');
     const authorization = cookieAuthorization(request);
     if (!authorization) return fail(401,'AUTH_REQUIRED');
