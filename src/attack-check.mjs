@@ -1,57 +1,57 @@
 // The student changes this check as each stage adds an attack to the same app.
 // Never return tokens, private keys, real names, or note bodies.
-import { checkStep2 } from './step2-checks.mjs';
-import { checkStep3 } from './step3-checks.mjs';
-import { checkStep4 } from './step4-checks.mjs';
-import { checkStep5 } from './step5-checks.mjs';
-import { checkStep8 } from './step8-checks.mjs';
-import { checkStep10 } from './step10-checks.mjs';
-import { checkStep11 } from './step11-checks.mjs';
-import { checkStep12 } from './step12-checks.mjs';
 export async function runAttackChecks(config) {
   if (config.step === 12) {
+    const { checkStep12 } = await import('./step12-checks.mjs');
     const checks = await checkStep12(config);
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`12단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 11) {
+    const { checkStep11 } = await import('./step11-checks.mjs');
     const checks = await checkStep11(config);
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`11단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 10) {
+    const { checkStep10 } = await import('./step10-checks.mjs');
     const checks = await checkStep10(config);
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`10단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 8 || config.step === 9) {
+    const { checkStep8 } = await import('./step8-checks.mjs');
     const checks = await checkStep8(config, { expectedStep: config.step });
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`${config.step}단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if ([5, 6, 7].includes(config.step)) {
+    const { checkStep5 } = await import('./step5-checks.mjs');
     const checks = await checkStep5(config, { expectedStep: config.step });
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`${config.step}단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 4) {
+    const { checkStep4 } = await import('./step4-checks.mjs');
     const checks = await checkStep4(config);
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`4단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 3) {
+    const { checkStep3 } = await import('./step3-checks.mjs');
     const checks = await checkStep3(config);
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`3단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
   if (config.step === 2) {
+    const { checkStep2 } = await import('./step2-checks.mjs');
     const checks = await checkStep2(config);
     const failed = checks.find(check => !check.passed);
     if (failed) throw new Error(`2단계 점검 실패: ${failed.attackId} (${failed.observed})`);

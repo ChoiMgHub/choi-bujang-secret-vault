@@ -64,3 +64,29 @@ test('step 12 bundle returns only observed redacted fields and refuses a failed 
     await assert.rejects(runAttackChecks(config),/12단계 점검 실패/u);
   }finally{globalThis.fetch=original;}
 });
+
+test('submission entry imports and runs step 12 while unrelated stage modules are unavailable',async()=>{
+  const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
+  const {tmpdir}=await import('node:os');
+  const {join}=await import('node:path');
+  const {spawnSync}=await import('node:child_process');
+  const {pathToFileURL}=await import('node:url');
+  const directory=await mkdtemp(join(tmpdir(),'aleph-step12-import-'));
+  try{
+    await writeFile(join(directory,'attack-check.mjs'),await readFile(new URL('../src/attack-check.mjs',import.meta.url)));
+    // Only the selected checker exists in this fixture. An unused older module
+    // must not prevent entry import or dispatch. Actual checks are tested above.
+    await writeFile(join(directory,'step12-checks.mjs'),
+      `export async function checkStep12(){return [{attackId:'isolated_fixture',expected:'fixture',observed:'fixture',passed:true}];}`);
+    const entry=pathToFileURL(join(directory,'attack-check.mjs')).href;
+    const script=`import assert from 'node:assert/strict';
+      const {runAttackChecks}=await import(${JSON.stringify(entry)});
+      const result=await runAttackChecks({step:12});
+      assert.deepEqual(result,[{attackId:'isolated_fixture',expected:'fixture',observed:'fixture'}]);
+      await assert.rejects(runAttackChecks({step:2}),{code:'ERR_MODULE_NOT_FOUND'});
+      console.log('isolated_stage_import_ok');`;
+    const child=spawnSync(process.execPath,['--input-type=module','-e',script],{encoding:'utf8',timeout:10000});
+    assert.equal(child.status,0,child.stderr);
+    assert.match(child.stdout,/isolated_stage_import_ok/u);
+  }finally{await rm(directory,{recursive:true,force:true});}
+});
