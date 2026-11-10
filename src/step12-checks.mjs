@@ -10,8 +10,13 @@ export async function checkStep12(config,{fetchImpl=globalThis.fetch}={}) {
     ||source.pathname!=='/rest/v1/vault_notes'||source.username||source.password||source.port||source.search||source.hash)throw Error('공개 HTTPS 배포·원본 API 주소를 확인하세요.');
   const checks=[];
   const add=(attackId,expected,observed,passed)=>checks.push({attackId,expected,observed,passed:Boolean(passed)});
-  const send=(target,headers={})=>fetchImpl(new URL(target,app),{
-    method:'GET',headers,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(15000)});
+  let requestCount=0;
+  const send=(target,headers={})=>{
+    if(requestCount>=24)throw Error('12단계 점검 요청 상한 24회를 초과할 수 없습니다.');
+    requestCount++;
+    return fetchImpl(new URL(target,app),{
+      method:'GET',headers,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(15000)});
+  };
   const json=async response=>{try{return await response.json();}catch{return null;}};
   const errorOnly=(data,error)=>data&&Object.keys(data).length===1&&data.error===error;
   const uiHeaders={'x-requested-with':'vault-ui'};
@@ -29,12 +34,7 @@ export async function checkStep12(config,{fetchImpl=globalThis.fetch}={}) {
   add('initial_screen','GET 초기 화면은 보호 패널·목록 숨김, 로그인·작전실 요소와 보안 헤더 포함',`HTTP ${root.status}, 화면 확인 ${hidden}`,hidden);
   const seed=await send('/data.json');
   add('public_source_absent','GET 공개 메모 원문 파일 404',`HTTP ${seed.status}`,seed.status===404);
-  let assets=true;const assetStatuses=[];
-  for(const path of ['/auth-ui.js','/operations-ui.js','/verification-ui.js']){
-    const response=await send(path),text=await response.text();assetStatuses.push(response.status);
-    assets&&=response.status===200&&text.includes('/api/')&&!/(?:localStorage|sessionStorage|indexedDB|innerHTML|sb_secret_[A-Za-z0-9_-]{12,}|sb_publishable_[A-Za-z0-9_-]{8,})/u.test(text);
-  }
-  add('browser_assets','GET 로그인·작전실·요청표 JS 배포, 브라우저 저장소·키 원문 없음',`HTTP ${assetStatuses.join('/')}, 파일 확인 ${assets}`,assets);
+  checks.push({attackId:'browser_assets',expected:'로그인·작전실·요청표 JS 3개별 본문 검사는 요청 예산 제한으로 미실행',observed:'not_run',passed:null});
   const vendor=await send('/vendor/supabase.js');
   add('browser_sdk_removed','GET 기존 브라우저 SDK 파일 404',`HTTP ${vendor.status}`,vendor.status===404);
   const auth=await send('/api/auth',uiHeaders),session=await json(auth);

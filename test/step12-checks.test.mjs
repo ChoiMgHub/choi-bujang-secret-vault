@@ -12,6 +12,7 @@ function fixture({leak=false,databaseAllowed=false,missing=false,stale=false,ico
     assert.equal(url.protocol,'https:');
     assert.ok(['GET','HEAD'].includes(init.method||'GET'),'submission attempted a forbidden HTTP method');
     assert.equal(init.body,undefined,'submission attempted a request body');
+    assert.ok(calls.length<24,'submission exceeded the total 24-request limit');
     calls.push({path,method:init.method||'GET'});
     if(url.origin===new URL(config.originalApiUrl).origin){
       assert.ok(!path.includes('/rpc/'),'submission invoked a DB function');
@@ -40,13 +41,15 @@ function fixture({leak=false,databaseAllowed=false,missing=false,stale=false,ico
   };
   return {fetchImpl,calls};
 }
-test('step 12 sends only public HTTPS GET/HEAD and leaves all write-dependent groups not_run',async()=>{
+test('step 12 stays within 24 public HTTPS requests and leaves unexecuted groups not_run',async()=>{
   const f=fixture();const checks=await checkStep12(config,f);
   assert.equal(checks.length,20);
-  assert.equal(checks.filter(c=>c.passed===true).length,16);
+  assert.equal(checks.filter(c=>c.passed===true).length,15);
   const notRun=checks.filter(c=>c.observed==='not_run');
-  assert.equal(notRun.length,4);assert.ok(notRun.every(c=>c.passed===null));
-  assert.equal(f.calls.length,27);
+  assert.equal(notRun.length,5);assert.ok(notRun.every(c=>c.passed===null));
+  assert.equal(f.calls.length,24);
+  assert.equal(checks.find(c=>c.attackId==='browser_assets').observed,'not_run');
+  assert.ok(!f.calls.some(c=>['/auth-ui.js','/operations-ui.js','/verification-ui.js'].includes(c.path)));
   assert.ok(!f.calls.some(c=>c.path.includes('/rpc/')||c.path==='/api/operations-rule'||c.path==='/api/admin/notices'));
 });
 test('missing API, leaked error payload, permissive original DB and stale identity fail read-only checks',async()=>{
@@ -69,7 +72,7 @@ test('step 12 submission preserves exact not_run observations without treating t
     const attempts=await runAttackChecks(config);
     assert.equal(attempts.length,20);
     assert.ok(attempts.every(c=>Object.keys(c).sort().join(',')==='attackId,expected,observed'));
-    assert.equal(attempts.filter(c=>c.observed==='not_run').length,4);
+    assert.equal(attempts.filter(c=>c.observed==='not_run').length,5);
     assert.ok(!JSON.stringify(attempts).includes('learner-a@'));
     globalThis.fetch=fixture({leak:true}).fetchImpl;
     await assert.rejects(runAttackChecks(config),/12단계 점검 실패/u);
@@ -114,7 +117,7 @@ test('actual step 12 module imports with only its public-key constant and no leg
       await writeFile(join(directory,name),await readFile(new URL(`../src/${name}`,import.meta.url)));
     const module=await import(pathToFileURL(join(directory,'step12-checks.mjs')).href);
     const checks=await module.checkStep12(config,fixture());
-    assert.equal(checks.filter(c=>c.observed==='not_run').length,4);
+    assert.equal(checks.filter(c=>c.observed==='not_run').length,5);
     assert.ok(checks.every(c=>c.observed==='not_run'||c.passed));
   }finally{await rm(directory,{recursive:true,force:true});}
 });
@@ -133,8 +136,8 @@ test('step 12 completes with text/json-only response objects and never reads PNG
     };
   };
   const checks=await checkStep12(config,{fetchImpl});
-  assert.equal(f.calls.length,27);
-  assert.equal(checks.filter(c=>c.passed===true).length,16);
+  assert.equal(f.calls.length,24);
+  assert.equal(checks.filter(c=>c.passed===true).length,15);
   assert.equal(checks.find(c=>c.attackId==='icon_pixel_dimensions_not_run').observed,'not_run');
   assert.ok(checks.every(c=>c.observed==='not_run'||c.passed));
 });
