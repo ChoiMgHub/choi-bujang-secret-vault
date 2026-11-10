@@ -8,16 +8,58 @@ export async function checkStep12(config,{fetchImpl=globalThis.fetch}={}) {
   if(app.protocol!=='https:'||!publicHost(app.hostname)||app.username||app.password||app.port||app.search||app.hash||app.pathname!=='/'
     ||source.protocol!=='https:'||source.origin!==issuer.origin||!/^https:\/\/[a-z0-9-]+\.supabase\.co\/auth\/v1$/u.test(issuer.href)
     ||source.pathname!=='/rest/v1/vault_notes'||source.username||source.password||source.port||source.search||source.hash)throw Error('공개 HTTPS 배포·원본 API 주소를 확인하세요.');
-  const checks=[];
-  const add=(attackId,expected,observed,passed)=>checks.push({attackId,expected,observed,passed:Boolean(passed)});
+  const checks=[],requests=[];
+  const responseEvidence=new WeakMap();
+  const trace=value=>typeof value==='string'&&/^[A-Za-z0-9:-]{1,96}$/u.test(value)?value:null;
+  let recordedThrough=0;
+  const add=(attackId,expected,_summary,passed)=>{
+    const actual=requests.slice(recordedThrough);recordedThrough=requests.length;
+    // A result is built only from fetch responses captured for this check.
+    // No response or an unmatched body/header request ID is not a verified result.
+    if(!actual.length||actual.some(r=>r.idMismatch)){
+      checks.push({attackId,expected,observed:'not_run',passed:null});return;
+    }
+    const origin=actual[0].origin===app.origin?'':`${actual[0].origin}; `;
+    let observed=origin+actual.map(r=>`GET ${r.path} HTTP ${r.status}`).join('; ');
+    if(actual.length===1){
+      const r=actual[0];
+      if(r.responseId)observed+=`; responseId=${r.responseId}`;
+      if(r.error)observed+=`; error=${r.error}`;
+      if(r.path==='/api/device'&&r.deviceStatus)observed+=`; deviceStatus=${r.deviceStatus}`;
+      if(r.path==='/api/operations')observed+=`; operationsRequestId=${r.operationsRequestId||'not_run'}`;
+    }
+    if(observed.length>300){checks.push({attackId,expected,observed:'not_run',passed:null});return;}
+    checks.push({attackId,expected,observed,passed:Boolean(passed)});
+  };
   let requestCount=0;
-  const send=(target,headers={})=>{
+  const send=async(target,headers={})=>{
     if(requestCount>=24)throw Error('12단계 점검 요청 상한 24회를 초과할 수 없습니다.');
     requestCount++;
-    return fetchImpl(new URL(target,app),{
+    const url=new URL(target,app);
+    const response=await fetchImpl(url,{
       method:'GET',headers,redirect:'error',cache:'no-store',signal:AbortSignal.timeout(15000)});
+    const headerId=trace(response.headers.get('x-request-id'));
+    const evidence={origin:url.origin,path:url.pathname+url.search,status:response.status,headerId,
+      responseId:headerId||trace(response.headers.get('sb-request-id'))||trace(response.headers.get('x-vercel-id'))};
+    requests.push(evidence);responseEvidence.set(response,evidence);
+    return response;
   };
-  const json=async response=>{try{return await response.json();}catch{return null;}};
+  const json=async response=>{
+    try{
+      const data=await response.json(),evidence=responseEvidence.get(response);
+      if(evidence){
+        if(typeof data?.error==='string'&&/^[A-Z0-9_]{1,48}$/u.test(data.error))evidence.error=data.error;
+        if(evidence.path==='/api/device'&&['not_requested','pending','approved','revoked','expired'].includes(data?.status))evidence.deviceStatus=data.status;
+        if(evidence.path==='/api/operations'&&data?.schema==='aleph.operations.record.v1'){
+          const id=trace(data.requestId);
+          evidence.idMismatch=!id||!evidence.headerId||id!==evidence.headerId
+            ||(config.expectedCommit&&data.commit!==config.expectedCommit);
+          if(!evidence.idMismatch)evidence.operationsRequestId=id;
+        }
+      }
+      return data;
+    }catch{return null;}
+  };
   const errorOnly=(data,error)=>data&&Object.keys(data).length===1&&data.error===error;
   const uiHeaders={'x-requested-with':'vault-ui'};
   const identityResponse=await send('/aleph.json'),identity=await json(identityResponse);
