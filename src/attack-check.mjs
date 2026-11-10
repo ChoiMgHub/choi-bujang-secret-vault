@@ -7,7 +7,14 @@ import { checkStep5 } from './step5-checks.mjs';
 import { checkStep8 } from './step8-checks.mjs';
 import { checkStep10 } from './step10-checks.mjs';
 import { checkStep11 } from './step11-checks.mjs';
+import { checkStep12 } from './step12-checks.mjs';
 export async function runAttackChecks(config) {
+  if (config.step === 12) {
+    const checks = await checkStep12(config);
+    const failed = checks.find(check => !check.passed);
+    if (failed) throw new Error(`12단계 점검 실패: ${failed.attackId} (${failed.observed})`);
+    return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
+  }
   if (config.step === 11) {
     const checks = await checkStep11(config);
     const failed = checks.find(check => !check.passed);

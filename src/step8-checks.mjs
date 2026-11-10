@@ -2,7 +2,7 @@ import { checkStep5 } from './step5-checks.mjs';
 import { SUPABASE_PUBLIC_KEY } from './supabase-public.mjs';
 
 export async function checkStep8(config, { fetchImpl = globalThis.fetch, expectedStep = 8 } = {}) {
-  if (![8, 9, 10, 11].includes(expectedStep)) throw new Error('지원하는 구역 점검 단계는 8~11입니다.');
+  if (![8, 9, 10, 11, 12].includes(expectedStep)) throw new Error('지원하는 구역 점검 단계는 8~12입니다.');
   const checks = await checkStep5(config, { fetchImpl, expectedStep });
   const app = new URL(config.publicAppUrl);
   for (const [attackId, method, path] of [

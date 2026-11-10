@@ -3,8 +3,8 @@ import { SUPABASE_PUBLIC_KEY } from './supabase-public.mjs';
 
 // Anonymous live requests only. Browser installation and approved sessions are
 // separate manual checks; this function never describes them as executed.
-export async function checkStep11(config, {fetchImpl=globalThis.fetch, priorCheck=checkStep10}={}) {
-  const previous=await priorCheck(config,{fetchImpl,expectedStep:11});
+export async function checkStep11(config, {fetchImpl=globalThis.fetch, priorCheck=checkStep10, expectedStep=11}={}) {
+  const previous=await priorCheck(config,{fetchImpl,expectedStep});
   const checks=[{attackId:'prior_stage_http_checks',expected:'기존 1~10단계의 공개·미로그인 HTTP 점검 20항목 유지',
     passed:previous.length===20&&previous.every(v=>v.passed),
     observed:`기존 HTTP ${previous.length}항목 중 ${previous.filter(v=>v.passed).length}항목 일치; 실패 ${previous.filter(v=>!v.passed).map(v=>v.attackId).join(',')||'없음'}`}];
