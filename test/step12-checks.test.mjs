@@ -5,7 +5,7 @@ import { checkStep12 } from '../src/step12-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
 import { createRestoreHandler } from '../src/restore-api.mjs';
 const config={...JSON.parse(await readFile(new URL('../aleph.config.json',import.meta.url),'utf8')),step:12,expectedCommit:'a'.repeat(40)};
-function fixture({leak=false,databaseAllowed=false,missing=false,stale=false}={}){
+function fixture({leak=false,databaseAllowed=false,missing=false,stale=false,iconType='image/png'}={}){
   const calls=[];
   const fetchImpl=async(target,init={})=>{
     const url=new URL(target),path=url.pathname;
@@ -36,21 +36,21 @@ function fixture({leak=false,databaseAllowed=false,missing=false,stale=false}={}
       return Response.json({error:'AUTH_REQUIRED'},{status:401,headers:{'cache-control':'private, no-store'}});
     }
     return new Response(await readFile(new URL(`../public/${path==='/'?'index.html':path.slice(1)}`,import.meta.url)),
-      {headers:{'x-content-type-options':'nosniff'}});
+      {headers:{'x-content-type-options':'nosniff',...(path.endsWith('.png')?{'content-type':iconType}:{})}});
   };
   return {fetchImpl,calls};
 }
 test('step 12 sends only public HTTPS GET/HEAD and leaves all write-dependent groups not_run',async()=>{
   const f=fixture();const checks=await checkStep12(config,f);
-  assert.equal(checks.length,19);
+  assert.equal(checks.length,20);
   assert.equal(checks.filter(c=>c.passed===true).length,16);
   const notRun=checks.filter(c=>c.observed==='not_run');
-  assert.equal(notRun.length,3);assert.ok(notRun.every(c=>c.passed===null));
+  assert.equal(notRun.length,4);assert.ok(notRun.every(c=>c.passed===null));
   assert.equal(f.calls.length,27);
   assert.ok(!f.calls.some(c=>c.path.includes('/rpc/')||c.path==='/api/operations-rule'||c.path==='/api/admin/notices'));
 });
 test('missing API, leaked error payload, permissive original DB and stale identity fail read-only checks',async()=>{
-  for(const options of [{missing:true},{leak:true},{databaseAllowed:true},{stale:true}]){
+  for(const options of [{missing:true},{leak:true},{databaseAllowed:true},{stale:true},{iconType:'text/html'}]){
     const checks=await checkStep12(config,fixture(options));
     assert.ok(checks.some(c=>c.observed!=='not_run'&&!c.passed));
   }
@@ -67,9 +67,9 @@ test('step 12 submission preserves exact not_run observations without treating t
   try{
     const f=fixture();globalThis.fetch=f.fetchImpl;
     const attempts=await runAttackChecks(config);
-    assert.equal(attempts.length,19);
+    assert.equal(attempts.length,20);
     assert.ok(attempts.every(c=>Object.keys(c).sort().join(',')==='attackId,expected,observed'));
-    assert.equal(attempts.filter(c=>c.observed==='not_run').length,3);
+    assert.equal(attempts.filter(c=>c.observed==='not_run').length,4);
     assert.ok(!JSON.stringify(attempts).includes('learner-a@'));
     globalThis.fetch=fixture({leak:true}).fetchImpl;
     await assert.rejects(runAttackChecks(config),/12단계 점검 실패/u);
@@ -114,7 +114,27 @@ test('actual step 12 module imports with only its public-key constant and no leg
       await writeFile(join(directory,name),await readFile(new URL(`../src/${name}`,import.meta.url)));
     const module=await import(pathToFileURL(join(directory,'step12-checks.mjs')).href);
     const checks=await module.checkStep12(config,fixture());
-    assert.equal(checks.filter(c=>c.observed==='not_run').length,3);
+    assert.equal(checks.filter(c=>c.observed==='not_run').length,4);
     assert.ok(checks.every(c=>c.observed==='not_run'||c.passed));
   }finally{await rm(directory,{recursive:true,force:true});}
+});
+
+
+test('step 12 completes with text/json-only response objects and never reads PNG binary bodies',async()=>{
+  const f=fixture();
+  const fetchImpl=async(target,init)=>{
+    const response=await f.fetchImpl(target,init);
+    const png=new URL(target).pathname.endsWith('.png');
+    return {
+      status:response.status,
+      headers:{get:name=>response.headers.get(name)},
+      text:()=>{assert.equal(png,false,'PNG body must not be read');return response.text();},
+      json:()=>{assert.equal(png,false,'PNG body must not be read');return response.json();},
+    };
+  };
+  const checks=await checkStep12(config,{fetchImpl});
+  assert.equal(f.calls.length,27);
+  assert.equal(checks.filter(c=>c.passed===true).length,16);
+  assert.equal(checks.find(c=>c.attackId==='icon_pixel_dimensions_not_run').observed,'not_run');
+  assert.ok(checks.every(c=>c.observed==='not_run'||c.passed));
 });

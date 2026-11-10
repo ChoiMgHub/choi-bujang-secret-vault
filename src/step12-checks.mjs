@@ -63,14 +63,15 @@ export async function checkStep12(config,{fetchImpl=globalThis.fetch}={}) {
   const manifestResponse=await send('/app.webmanifest'),manifest=await json(manifestResponse);
   let pwa=manifestResponse.status===200&&Boolean(manifest?.name)&&manifest.start_url==='/'&&manifest.scope==='/'&&manifest.display==='standalone'
     &&Array.isArray(manifest.icons)&&manifest.icons.length===2&&manifest.icons.every(i=>['/icons/vault-192.png','/icons/vault-512.png'].includes(i.src));
-  const iconStatuses=[];
+  const iconStatuses=[],iconTypes=[];
   for(const size of [192,512]){
-    const response=await send(`/icons/vault-${size}.png`),bytes=new Uint8Array(await response.arrayBuffer());iconStatuses.push(response.status);
-    pwa&&=response.status===200&&bytes.length>24&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71
-      &&new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(16)===size
-      &&new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint32(20)===size;
+    const response=await send(`/icons/vault-${size}.png`);
+    const type=response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()||'missing';
+    iconStatuses.push(response.status);iconTypes.push(type);
+    pwa&&=response.status===200&&type==='image/png';
   }
-  add('pwa_public_assets','GET manifest·192/512 PNG 배포; 설치·승인 실측과 구분',`manifest HTTP ${manifestResponse.status}, 아이콘 HTTP ${iconStatuses.join('/')}, 확인 ${pwa}`,pwa);
+  add('pwa_public_assets','GET manifest 설정·두 아이콘 경로의 200 image/png; 픽셀 크기는 별도 미실행',`manifest HTTP ${manifestResponse.status}, 아이콘 HTTP ${iconStatuses.join('/')}, MIME ${iconTypes.join('/')}, 확인 ${pwa}`,pwa);
+  checks.push({attackId:'icon_pixel_dimensions_not_run',expected:'PNG 픽셀 192/512 크기 검사는 바이너리 본문 API 미지원으로 미실행',observed:'not_run',passed:null});
   const offline=await send('/offline.html'),notice=await offline.text(),worker=await send('/service-worker.js'),script=await worker.text();
   const offlineAssets=offline.status===200&&worker.status===200&&notice.includes('서버에 연결할 수 없습니다')&&script.includes('/offline.html')&&script.includes("'/api/'");
   add('offline_public_assets','GET 공개 오프라인 안내·API 제외 워커; 실제 오프라인 전환은 별도',`HTTP ${offline.status}/${worker.status}, 파일 확인 ${offlineAssets}`,offlineAssets);
