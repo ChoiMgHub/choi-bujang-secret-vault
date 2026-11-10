@@ -160,6 +160,26 @@ test('starter judge path keeps signature/claim verification and the helper remai
   assert.equal(hash, '784ec5af7067e01c6b7f83cf423db0b8c63d9e09');
 });
 
+test('stage 11 preserves the authenticated operator relay boundary without letting student claims bypass approval', async () => {
+  const operator = async (changes = {}, key = judgePair.privateKey) => new SignJWT({
+    aleph_run: '20000000-0000-4000-8000-000000000002', aleph_role: 'judge', aleph_identity: 'a', ...changes,
+  }).setProtectedHeader({ alg: 'ES256', kid: judgeJwk.kid }).setIssuer(config.judgeIssuer)
+    .setAudience(changes.aud ?? new URL(config.publicAppUrl).hostname).setSubject(userId)
+    .setIssuedAt().setExpirationTime('10m').sign(key);
+  const f = fixture({ step: 11, deviceStatus: 'pending' });
+  const signed = `Bearer ${await operator()}`;
+  assert.equal((await call(f, signed, 'GET', `/api/notes/${rows[0].id}`)).code, 200);
+  assert.equal((await call(f, signed, 'GET', `/api/notes/${rows[2].id}`)).code, 404);
+  const reads = f.recordCalls;
+  for (const forged of [await operator({}, attacker.privateKey), await operator({ aleph_role: 'student' }),
+    await operator({ aud: 'untrusted.example' })]) {
+    assert.equal((await call(f, `Bearer ${forged}`)).code, 401);
+  }
+  const student = await token({ session_id: '60000000-0000-4000-8000-000000000001', aleph_role: 'judge' });
+  assert.equal((await call(f, `Bearer ${student}`)).code, 403);
+  assert.equal(f.recordCalls, reads);
+});
+
 test('CRUD supports generated/supplied UUIDs, server-owned creation, safe update, deletion and subsequent 404', async () => {
   const f = fixture(); const auth = `Bearer ${await token()}`;
   const created = await call(f, auth, 'POST', '/api/notes', { title: '새 연습', body: '가상 내용', owner_id: otherId, userId: otherId, role: 'admin' });

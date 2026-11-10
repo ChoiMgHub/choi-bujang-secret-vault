@@ -41,6 +41,13 @@ export async function readDeviceApproval(db, identity, requestApproval = false) 
 export async function enforceDeviceApproval({ db, identity, config, authorization }, response) {
   // Older-stage isolated regression fixtures retain their original behavior.
   if (config?.step < 11) return true;
+  // identity must already come from the unchanged createLoginVerifier. The
+  // operator relay has its own identity/device/route checks (DECIDER_REQUEST.md)
+  // and ES256 issuer/audience/run-bound authentication. It has no Supabase Auth
+  // session to enroll. Preserve that existing path, including owner checks.
+  // Browser headers, student JWT role-like claims and installation never set it.
+  if (identity?.kind === 'judge' && UUID.test(identity.userId || '')
+      && UUID.test(identity.runId || '') && ['a', 'b'].includes(identity.identity)) return true;
   const device = await readDeviceApproval(db, await bindDeviceSession(db, identity, authorization));
   if (permitsRegisteredDevice(device.status === 'approved')) return true;
   const unavailable = device.status === 'unavailable';
