@@ -1,9 +1,10 @@
 import ai from '../src/starter-stubs/ai.mjs';
 import threatIntel from '../src/starter-stubs/threat-intel.mjs';
+import operations from '../src/operations-api.mjs';
 
 // Preserve the two existing 501 endpoints in one function. Explicit static API
 // routes retain priority; a URL query cannot select or enable a feature.
-const handlers = new Map([['/api/ai', ai], ['/api/threat-intel', threatIntel]]);
+const handlers = new Map([['/api/ai', ai], ['/api/threat-intel', threatIntel], ['/api/operations', operations]]);
 export default function handler(request, response) {
   let path;
   try { path = new URL(request.url || '/', 'https://app.invalid').pathname; } catch { /* deny below */ }

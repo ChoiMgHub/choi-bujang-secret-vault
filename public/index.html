@@ -31,6 +31,11 @@
     .error { color: #ffd4dc; min-height: 1.5em; }
     .app-info { border: 1px solid #51667c; border-radius: 14px; padding: 16px 20px; background: #1a2a3d; }
     .app-info p { font-size: 15px; margin: 8px 0; }
+    .operations-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 20px 0; }
+    .operations-card { min-width: 0; padding: 16px; border: 1px solid #51667c; border-radius: 10px; background: #101a28; }
+    .operations-card h3 { margin: 0 0 10px; color: #8ad8df; }
+    .operations-card p, .operations-detail { font-size: 15px; overflow-wrap: anywhere; }
+    #operations-record { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: #101a28; border-radius: 8px; }
   </style>
 </head>
 <body>
@@ -67,6 +72,25 @@
       <p id="auth-error" class="error" role="alert"></p>
       <p>로그인한 계정으로 가상 메모를 작성하고 관리합니다.</p>
     </section>
+    <section id="operations-panel" class="auth-panel" aria-labelledby="operations-heading" hidden>
+      <div class="eyebrow">BYTE BACK · 12단계 제작 중</div>
+      <h2 id="operations-heading">탈환 작전실</h2>
+      <p>현재 로그인 세션의 서버 기록을 확인합니다. 메모 본문은 표시하지 않습니다.</p>
+      <button id="operations-refresh" type="button">서버 기록 다시 읽기</button>
+      <p id="operations-status" role="status" aria-live="polite">서버 기록을 아직 읽지 않았습니다.</p>
+      <div class="operations-grid">
+        <article class="operations-card"><h3>판정 규칙</h3><p id="operations-policy">미확인</p></article>
+        <article class="operations-card"><h3>탐지 사건</h3><p id="operations-detection">미실행</p></article>
+        <article class="operations-card"><h3>회수 상태</h3><p id="operations-revocation">미확인</p></article>
+        <article class="operations-card"><h3>복구 사본</h3><p id="operations-recovery">미확인</p></article>
+      </div>
+      <p id="operations-official" class="operations-detail">41종 공식 시험: 결과 미확인. 화면 표시로 통과를 대신하지 않습니다.</p>
+      <p id="operations-reference" class="operations-detail"></p>
+      <details><summary>이 화면과 대조할 가린 서버 기록</summary>
+        <p class="operations-detail">아래 JSON은 DB의 별도 작전실 감사표에 저장된 같은 요약입니다. 요청 ID와 확인 시각으로 대조합니다.</p>
+        <pre id="operations-record"></pre>
+      </details>
+    </section>
     <section id="memo-panel" class="auth-panel" aria-labelledby="memo-heading" hidden>
       <h2 id="memo-heading">내 가상 메모</h2>
       <p>이 계정으로 작성한 메모가 표시됩니다. 처음 목록이 비어 있으면 새 연습 메모를 추가하세요.</p>
@@ -90,5 +114,6 @@
   </main>
   <script src="/auth-ui.js" defer></script>
   <script src="/pwa-ui.js" defer></script>
+  <script src="/operations-ui.js" defer></script>
 </body>
 </html>
