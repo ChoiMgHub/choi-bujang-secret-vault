@@ -15,7 +15,7 @@
     refresh.disabled = false;
   }
   function render(data) {
-    fields.policy.textContent = `${data.policy.ruleIds.length}개 규칙: ${data.policy.ruleIds.join(' · ')}. 이번 API 판정 시험: 미실행.`;
+    fields.policy.textContent = `${data.policy.ruleIds.length}개 규칙: ${data.policy.ruleIds.join(' · ')}. 이 요약 조회는 판정을 실행하지 않습니다. 실행 결과는 아래 통합 시험표에서 확인합니다.`;
     fields.detection.textContent = '운영 엔진 사건 전달·탐지 집계: 미실행. 사건 0건 또는 회수 성공으로 표시하지 않습니다.';
     fields.revocation.textContent = `현재 세션: 서버 승인 완료. 이 세션의 DB 승인 철회 기록 ${data.revocation.events}건. 운영 엔진 회수 집행: 미실행.`;
     const r = data.recovery;

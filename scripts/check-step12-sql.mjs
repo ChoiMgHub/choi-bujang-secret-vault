@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { validOperationsRecord } from '../src/operations-api.mjs';
+import { validVerificationReport } from '../src/verification-api.mjs';
+import { emptyVerificationRows } from '../src/verification-catalog.mjs';
 if (!process.argv[2]) throw Error('Supply the local PGlite module path.');
 const { PGlite } = await import(pathToFileURL(process.argv[2]).href);
 const db = new PGlite();
@@ -16,6 +18,9 @@ const rules="ARRAY['device_registered','step_up_required','resource_zone']";
 const q=async sql=>(await db.query(sql)).rows;
 const code=(u,s)=>createHash('sha256').update(`${u}:${s}`).digest('hex').slice(0,16);
 const snapshot=async(u=a,s=sa)=>(await q(`SELECT public.aleph_step12_operations_snapshot('${u}','${s}','${commit}',${rules}) AS value`))[0].value;
+const verification=async(mode,u=a,s=sa,id=null,item=null)=>(await db.query(
+  'SELECT public.aleph_step12_verification($1::uuid,$2::uuid,$3::text,$4::text,$5::uuid,$6::jsonb) AS value',
+  [u,s,commit,mode,id,item===null?null:JSON.stringify(item)])).rows[0].value;
 let count=0;const pass=name=>{count++;console.log(`통과 · ${name}`);};
 const oldState=async()=>({
   notes:await q('SELECT * FROM public.vault_notes ORDER BY id'),
@@ -43,6 +48,9 @@ try {
     .replaceAll('__NOTE_ID__',note).replaceAll('__OWNER_ID__',b).replaceAll('__CONTENT_SHA256__',hash);
   await db.exec(backupSQL);
   await q(`SELECT public.aleph_step10_restore_note('${note}','${b}','${hash}')`);
+  await db.exec(`INSERT INTO public.vault_notes VALUES
+    ('10000000-0000-4000-8000-000000000001','${a}','A virtual fixture','A virtual body',now()),
+    ('20000000-0000-4000-8000-000000000001','${b}','B virtual fixture','B virtual body',now())`);
   const before=await oldState();
   const sql=await readFile(new URL('../sql/step12-operations.sql',import.meta.url),'utf8');
   await db.exec(sql);assert.deepEqual(await oldState(),before);
@@ -76,6 +84,44 @@ try {
   await db.exec(sql);assert.deepEqual(await oldState(),before);
   assert.deepEqual(await q('SELECT * FROM aleph_operations_step12.snapshots ORDER BY checked_at'),summaries);
   pass('SQL 재실행이 이전 작전실 기록과 기존 자료를 보존');
+  const verificationSQL=await readFile(new URL('../sql/step12-verification.sql',import.meta.url),'utf8');
+  await db.exec(verificationSQL);assert.deepEqual(await oldState(),before);
+  const empty=await verification('read');assert.equal(empty.runId,null);
+  assert.equal(empty.rows.length,0);assert.equal(validVerificationReport(empty,commit),true);
+  pass('제작 2 SQL 준비와 미실행 조회, 기존 자료·첫 요약 기록 보존');
+  const run=await verification('start');assert.equal(run.account,'A');assert.equal(run.fixtureNotesReady,true);
+  assert.equal(validVerificationReport(run,commit),true);
+  const row={...emptyVerificationRows().find(x=>x.caseId==='own_note'),state:'passed',actualStatus:200,
+    actualResult:'NOTE_SHAPE_MATCHED',requestId:'fixture::response-one',checkedAt:new Date().toISOString()};
+  const measured=await verification('append',a,sa,run.runId,row);
+  assert.equal(validVerificationReport(measured,commit),true);
+  assert.deepEqual((await q(`SELECT rows FROM aleph_operations_step12.verification_runs WHERE run_id='${run.runId}'`))[0].rows,measured.rows);
+  pass('시험 묶음 생성과 요청별 가린 행의 DB 저장·응답 일치');
+  const duplicate=await verification('append',a,sa,run.runId,{...row,state:'failed',actualResult:'UNEXPECTED_RESPONSE'});
+  assert.deepEqual(duplicate.rows,measured.rows);
+  pass('같은 묶음의 첫 관찰 결과를 재시도로 덮어쓰지 않음');
+  await assert.rejects(verification('read',b,sb,run.runId),/VERIFICATION_RUN_NOT_FOUND/u);
+  await assert.rejects(verification('read',a,sb),/VERIFICATION_INPUT_INVALID/u);
+  pass('다른 계정·로그인 세션의 시험 기록 접근 거부');
+  for(const item of [{...row,caseId:'official_41'},{...row,passed:41},{...row,source:null},
+    {...row,caseId:'foreign_note',state:'passed',requestId:null}, {...row,method:null}]) {
+    await assert.rejects(verification('append',a,sa,run.runId,item),/VERIFICATION_ROW_INVALID/u);
+  }
+  pass('공식 시험 사칭·추가 키·필수 정보 누락 행 저장 거부');
+  for(const role of ['anon','authenticated','service_role']) {
+    await db.exec(`SET ROLE ${role}`);
+    try {
+      await assert.rejects(q('SELECT * FROM aleph_operations_step12.verification_runs'),/permission denied/u);
+      if(role==='service_role')assert.equal((await verification('read')).account,'A');
+      else await assert.rejects(verification('read'),/permission denied/u);
+    }finally{await db.exec('RESET ROLE');}
+  }
+  pass('제작 2 표 직접 접근 거부, 제한 함수는 서버만 실행');
+  const runsBefore=await q('SELECT * FROM aleph_operations_step12.verification_runs ORDER BY started_at');
+  await db.exec(verificationSQL);
+  assert.deepEqual(await q('SELECT * FROM aleph_operations_step12.verification_runs ORDER BY started_at'),runsBefore);
+  assert.deepEqual(await oldState(),before);
+  pass('제작 2 SQL 재실행이 관찰 이력과 기존 사본·메모 보존');
   await db.exec(`UPDATE public.vault_notes SET content='changed virtual content' WHERE id='${note}'`);
   const changed=await snapshot(b,sb);assert.equal(changed.recovery.liveMatchesBackup,false);
   assert.equal(changed.recovery.restoreEvents,1);
@@ -88,6 +134,8 @@ try {
   await assert.rejects(snapshot(),/OPERATIONS_APPROVAL_REQUIRED/u);
   await db.exec(`UPDATE aleph_device_step11.devices SET expires_at=now()-interval '1 second' WHERE user_id='${b}'`);
   await assert.rejects(snapshot(b,sb),/OPERATIONS_APPROVAL_REQUIRED/u);
+  await assert.rejects(verification('read'),/VERIFICATION_APPROVAL_REQUIRED/u);
+  await assert.rejects(verification('read',b,sb),/VERIFICATION_APPROVAL_REQUIRED/u);
   pass('철회·만료 세션은 요약 기록을 읽거나 새로 생성하지 못함');
   console.log(`격리 PostgreSQL 시험 ${count}개 통과. 실제 Supabase 결과가 아니다.`);
 } finally {await db.close();}
