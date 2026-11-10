@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { checkStep12 } from '../src/step12-checks.mjs';
 import { runAttackChecks } from '../src/attack-check.mjs';
+import { createRestoreHandler } from '../src/restore-api.mjs';
 const config={...JSON.parse(await readFile(new URL('../aleph.config.json',import.meta.url),'utf8')),step:12,expectedCommit:'a'.repeat(40)};
 function fixture({leak=false,databaseAllowed=false,missing=false,stale=false}={}){
   const calls=[];
@@ -21,7 +22,13 @@ function fixture({leak=false,databaseAllowed=false,missing=false,stale=false}={}
       commit:config.expectedCommit,repoUrl:config.repoUrl,judgeIssuer:config.judgeIssuer});
     if(path==='/api/auth')return Response.json({user:null},{headers:{'cache-control':'no-store'}});
     if(['/data.json','/vendor/supabase.js'].includes(path))return new Response(null,{status:404});
-    if(path==='/api/restore')return Response.json({error:'METHOD_NOT_ALLOWED'},{status:405});
+    if(path==='/api/restore'){
+      let status,data;
+      const handler=createRestoreHandler({config,runtimeFactory(){throw Error('anonymous request must stop before runtime');}});
+      const response={setHeader(){},status(value){status=value;return this;},json(value){data=value;}};
+      await handler({url:path,method:init.method,headers:init.headers||{}},response);
+      return Response.json(data,{status});
+    }
     if(path.startsWith('/api/')){
       if(url.search)return Response.json({error:'INVALID_OPERATIONS_PATH'},{status:400});
       if(leak&&path==='/api/operations-check')return Response.json({error:'AUTH_REQUIRED',rows:[]},{status:401});

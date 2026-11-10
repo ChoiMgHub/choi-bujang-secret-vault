@@ -76,7 +76,7 @@ export async function checkStep12(config,{fetchImpl=globalThis.fetch}={}) {
   add('offline_public_assets','GET 공개 오프라인 안내·API 제외 워커; 실제 오프라인 전환은 별도',`HTTP ${offline.status}/${worker.status}, 파일 확인 ${offlineAssets}`,offlineAssets);
   for(const [id,path,status,error] of [
     ['anonymous_device_read','/api/device',401,'AUTH_REQUIRED'],
-    ['restore_get_rejected','/api/restore',405,'METHOD_NOT_ALLOWED'],
+    ['restore_get_rejected','/api/restore',401,'AUTH_REQUIRED'],
     ['anonymous_operations','/api/operations',401,'AUTH_REQUIRED'],
     ['anonymous_verification_read','/api/operations-check',401,'AUTH_REQUIRED'],
     ['verification_query_rejected','/api/operations-check?passed=41',400,'INVALID_OPERATIONS_PATH'],
