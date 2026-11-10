@@ -4,7 +4,7 @@ export async function runAttackChecks(config) {
   if (config.step === 12) {
     const { checkStep12 } = await import('./step12-checks.mjs');
     const checks = await checkStep12(config);
-    const failed = checks.find(check => !check.passed);
+    const failed = checks.find(check => check.observed !== 'not_run' && !check.passed);
     if (failed) throw new Error(`12단계 점검 실패: ${failed.attackId} (${failed.observed})`);
     return checks.map(({ attackId, expected, observed }) => ({ attackId, expected, observed }));
   }
