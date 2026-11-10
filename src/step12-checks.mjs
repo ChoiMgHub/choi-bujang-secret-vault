@@ -16,18 +16,10 @@ export async function checkStep12(config,{fetchImpl=globalThis.fetch}={}) {
     const actual=requests.slice(recordedThrough);recordedThrough=requests.length;
     // A result is built only from fetch responses captured for this check.
     // No response or an unmatched body/header request ID is not a verified result.
-    if(!actual.length||actual.some(r=>r.idMismatch)){
+    if(!actual.length||actual.some(r=>r.idMismatch||!r.responseId)){
       checks.push({attackId,expected,observed:'not_run',passed:null});return;
     }
-    const origin=actual[0].origin===app.origin?'':`${actual[0].origin}; `;
-    let observed=origin+actual.map(r=>`GET ${r.path} HTTP ${r.status}`).join('; ');
-    if(actual.length===1){
-      const r=actual[0];
-      if(r.responseId)observed+=`; responseId=${r.responseId}`;
-      if(r.error)observed+=`; error=${r.error}`;
-      if(r.path==='/api/device'&&r.deviceStatus)observed+=`; deviceStatus=${r.deviceStatus}`;
-      if(r.path==='/api/operations')observed+=`; operationsRequestId=${r.operationsRequestId||'not_run'}`;
-    }
+    const observed=actual.map(r=>`HTTP ${r.status} requestId=${r.responseId}`).join('; ');
     if(observed.length>300){checks.push({attackId,expected,observed:'not_run',passed:null});return;}
     checks.push({attackId,expected,observed,passed:Boolean(passed)});
   };
